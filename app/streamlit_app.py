@@ -16,6 +16,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from app.pages.clusters import render_clusters_page
+from app.pages.kpi_dashboard import render_kpi_dashboard_page
 
 from src.analytics.pattern_detectors import POLICY_NAMES, infer_pattern_label
 from src.report.nlg_patterns import render_pattern_summary
@@ -44,7 +45,7 @@ PERIODICITY_COLUMNS = [
     "periodicity_monthly",
 ]
 
-PAGE_OPTIONS = ("Pattern Card", "Data Explorer", "Clusters")
+PAGE_OPTIONS = ("Pattern Card", "KPI Dashboard", "Data Explorer", "Clusters")
 
 
 @st.cache_data(show_spinner=False)
@@ -1394,6 +1395,21 @@ def main() -> None:
 
     developer_mode = st.sidebar.checkbox("Developer mode", value=False)
     developer_metrics: Dict[str, Any] = {"sections": [], "dataframes": {}}
+
+    if page == "KPI Dashboard":
+        @_section_tracker(developer_metrics, "UI.KPI_Dashboard")
+        def _render_kpi_dashboard() -> None:
+            render_kpi_dashboard_page(
+                tables=tables,
+                developer_metrics=developer_metrics,
+            )
+
+        _render_kpi_dashboard()
+        if developer_mode:
+            developer_metrics["logs"] = _load_warning_log_records()
+            developer_metrics["champion"] = _load_champion_metadata()
+            _render_developer_panel(developer_metrics)
+        return
 
     if page == "Data Explorer":
         render_data_explorer_page(

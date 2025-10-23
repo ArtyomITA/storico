@@ -70,6 +70,9 @@ class PipelineConfig:
     use_umap: bool
     min_cluster_size: int
     min_samples: int
+    make_kpi: bool
+    make_calibration: bool
+    make_policy_metrics: bool
 
 
 def parse_args(argv: Sequence[str] | None = None) -> PipelineConfig:
@@ -137,6 +140,21 @@ def parse_args(argv: Sequence[str] | None = None) -> PipelineConfig:
         help="HDBSCAN min_samples parameter (only if --run-hdbscan).",
     )
     parser.add_argument(
+        "--make-kpi",
+        action="store_true",
+        help="Compute extended ranking KPIs (precision@k, MRR, nDCG@k) on test set.",
+    )
+    parser.add_argument(
+        "--make-calibration",
+        action="store_true",
+        help="Compute calibration diagnostics (Brier, ECE, MCE, reliability curves) on test set.",
+    )
+    parser.add_argument(
+        "--make-policy-metrics",
+        action="store_true",
+        help="Compute policy classifier metrics (confusion matrix, accuracy, uplift) on events.",
+    )
+    parser.add_argument(
         "--verbose",
         action="store_true",
         help="Increase logging verbosity for debugging.",
@@ -159,6 +177,9 @@ def parse_args(argv: Sequence[str] | None = None) -> PipelineConfig:
         use_umap=args.use_umap,
         min_cluster_size=args.min_cluster_size,
         min_samples=args.min_samples,
+        make_kpi=args.make_kpi,
+        make_calibration=args.make_calibration,
+        make_policy_metrics=args.make_policy_metrics,
     )
 
 
@@ -192,6 +213,15 @@ class PipelineRunner:
             steps.append(("Cluster embeddings with HDBSCAN", self.run_hdbscan))
 
         steps.append(("Summarise clusters", self.run_cluster_profiles))
+
+        if self.config.make_kpi:
+            steps.append(("Compute ranking KPIs", self.run_kpi_ranking))
+
+        if self.config.make_calibration:
+            steps.append(("Compute calibration diagnostics", self.run_calibration))
+
+        if self.config.make_policy_metrics:
+            steps.append(("Compute policy classifier metrics", self.run_policy_metrics))
 
         for name, callback in steps:
             self._run_step(name, callback)
@@ -481,6 +511,24 @@ class PipelineRunner:
             return
         cluster_profile.configure_logging()
         cluster_profile.main()
+
+    @log_timed("Compute ranking KPIs")
+    def run_kpi_ranking(self) -> None:
+        from src.analytics import kpi_ranking
+
+        kpi_ranking.main()
+
+    @log_timed("Compute calibration diagnostics")
+    def run_calibration(self) -> None:
+        from src.analytics import calibration
+
+        calibration.main()
+
+    @log_timed("Compute policy classifier metrics")
+    def run_policy_metrics(self) -> None:
+        from src.analytics import event_policy_metrics
+
+        event_policy_metrics.main()
 
 
 def main(argv: Sequence[str] | None = None) -> None:

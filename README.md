@@ -38,6 +38,9 @@ This document is the end-to-end technical reference for the SAP payment-pattern 
 - `data/curated/client_profiles.parquet`
 - `data/curated/per_event_policy_scores.parquet`
 - `data/curated/event_policy_predictions.parquet`
+- `data/curated/kpi_ranking.parquet` (se `--make-kpi` attivo)
+- `data/curated/calibration_summary.parquet` + `calibration_bins.parquet` (se `--make-calibration` attivo)
+- `data/curated/event_policy_metrics.parquet` + `event_policy_confusion.parquet` (se `--make-policy-metrics` attivo)
 - Logs confirming the RandomForest smoke test executed (top feature list printed).
 
 ---
@@ -49,10 +52,11 @@ This document is the end-to-end technical reference for the SAP payment-pattern 
 | `src/data/` | Ingestion and document-map utilities. |
 | `src/features/` | Event construction, label creation, and feature matrix engineering. |
 | `src/models/` | CatBoost and AutoGluon trainers plus champion orchestrator. |
-| `src/analytics/` | Policy detectors, embeddings, clustering, rule backtests. |
+| `src/analytics/` | Policy detectors, embeddings, clustering, rule backtests, KPI ranking, calibration diagnostics, policy classifier metrics. |
 | `src/report/` | Generation of HTML pattern cards. |
 | `src/pipeline/` | Unified command runner `run_all`. |
-| `app/` | Streamlit application (Pattern Card + Clusters pages). |
+| `app/` | Streamlit application (Pattern Card + KPI Dashboard + Data Explorer + Clusters pages). |
+| `app/pages/` | Modular page components (clusters.py, kpi_dashboard.py). |
 | `data/raw/` | Input CSV/XLSX extracts from SAP (user supplied). |
 | `data/curated/` | All intermediate and final Parquet artefacts. |
 | `models/` | Persisted ML models, calibrators, and AutoGluon predictor bundle. |
@@ -321,19 +325,133 @@ Each stage reads the artefacts produced by prior steps and fails fast if prerequ
 - Output: i riquadri compaiono nel report HTML subito dopo la sezione "Pattern sintetico" e prima del "Confronto Regole vs Modelli".
 
 ### 4.9 Interactive application (`app/streamlit_app.py`)
-- Three pages: Pattern Card (default), Data Explorer, Clusters.
-- **Data Explorer** offre filtri multipli (cliente, intervallo date, tipo documento, chiave contabile), ricerca full-text, tabella interattiva con tutte le colonne e download CSV immediato della vista filtrata.
-- In Data Explorer sono disponibili tab dedicate e toggle per attivare/disattivare le sezioni analitiche (cadence, policy, cardinalità) con grafici Plotly arricchiti da tooltip numerici.
+- Four pages: Pattern Card (default), KPI Dashboard, Data Explorer, Clusters.
+- **Pattern Card**: dashboard per cliente con metriche pattern, policy dominante, grafico recall@k e tabelle eventi/fatture.
+- **KPI Dashboard**: interfaccia interattiva per metriche di ranking (precision@k, hit_rate@k, nDCG@k, MRR, coverage@k) e calibrazione (Brier score, ECE, MCE, reliability curves); filtri per cliente, bucket cardinalità, modello; download CSV (vedi sezione 4.8.6).
+- **Data Explorer**: filtri multipli (cliente, intervallo date, tipo documento, chiave contabile), ricerca full-text, tabella interattiva con tutte le colonne e download CSV immediato della vista filtrata; tab dedicate per analisi cadence, policy, cardinalità con grafici Plotly.
+- **Clusters**: visualizzazione UMAP/t-SNE dei cluster HDBSCAN con colori per cluster, sidebar per filtri, tabelle cluster statistics e membri.
 - La sidebar include il toggle **Developer mode** che, se attivo, mostra un overlay diagnostico con metriche tecniche e log.
 - Leverages caching (`st.cache_data` / `st.cache_resource`) to minimise reload times.
 - Reads the same curated artefacts listed above and surfaces warnings for missing dependencies.
 - Run `streamlit run app/streamlit_app.py` after pipeline refresh.
 
+#### 4.8.3 PROMPT S1 — KPI estesi per ranking
+- Il modulo `src/analytics/kpi_ranking.py` calcola metriche di ranking estese su hold-out test (split temporale 70/30):
+  - **precision@k**: frazione di item top-k che sono rilevanti.
+  - **hit_rate@k** (alias recall@k): frazione di item rilevanti trovati nei top-k.
+  - **MRR (Mean Reciprocal Rank)**: reciproco del rank del primo item rilevante.
+  - **nDCG@k**: normalized Discounted Cumulative Gain, che penalizza i match rilevanti in posizioni basse.
+  - **coverage@k**: frazione di eventi che hanno almeno un hit nei top-k.
+- K-values di riferimento: {1, 2, 3, 5}.
+- Aggregazioni disponibili:
+  - **Global**: medie su tutti gli eventi di test.
+  - **Per-client**: medie per singolo cliente (utile per analisi cliente-specifiche).
+  - **Per-cardinality-bucket**: k=1, k=2-3, k≥4 (raggruppa eventi per numero di fatture reali abbinate).
+- Il modulo carica predizioni dal modello CatBoost con calibrazione (se disponibile), altrimenti usa un'euristica fallback.
+- Outputs:
+  - `data/curated/kpi_ranking.parquet` / `.csv`: tabella con colonne `aggregation_key`, `aggregation_value`, `n_events`, `precision@k`, `hit_rate@k`, `ndcg@k`, `coverage@k`, `mrr`.
+  - Console summary: stampa tabella KPI globali, per-bucket e top 5 clienti per hit_rate@3.
+- Usage standalone:
+  ```powershell
+  python -m src.analytics.kpi_ranking
+  ```
+- Integrazione in `run_all.py` con flag `--make-kpi`:
+  ```powershell
+  python -m src.pipeline.run_all --model catboost --make-kpi
+  ```
+
+#### 4.8.4 PROMPT S2 — Diagnostica di calibrazione probabilistica
+- Il modulo `src/analytics/calibration.py` valuta la qualità delle probabilità predette dai modelli pointwise su hold-out test (split 70/30):
+  - **Brier score**: errore quadratico medio delle predizioni probabilistiche (MSE tra p_i e label).
+  - **ECE (Expected Calibration Error)**: media pesata dello scostamento tra confidence e accuracy su bin equi-popolati.
+  - **MCE (Maximum Calibration Error)**: massimo scostamento tra confidence e accuracy (worst-case bin).
+  - **Reliability table**: 20 bin equi-popolati con `pred_mean` (confidence media) vs `obs_rate` (accuracy osservata) per costruire curve di calibrazione.
+- Metriche calcolate per:
+  - **Global**: intero test set.
+  - **Per-cardinality-bucket**: k=1, k=2-3, k≥4 (eventi raggruppati per numero di fatture reali).
+  - **Per-client**: top 10 clienti per volume (minimum 10 sample/client).
+- Il modulo supporta CatBoost e AutoGluon (se disponibili); carica modelli salvati con calibratori isotonic; se il modello non è disponibile o ha feature mismatch, usa predizioni euristiche fallback (age_days-based).
+- Outputs:
+  - `data/curated/calibration_summary.parquet`: tabella con colonne `model`, `segment_type`, `segment_value`, `n_samples`, `brier_score`, `ece`, `mce`.
+  - `data/curated/calibration_bins.parquet`: curve di reliability con colonne `bin_id`, `pred_mean`, `obs_rate`, `n_samples`, `model`, `segment_type`, `segment_value`.
+  - Console summary: stampa metriche globali, per bucket e top 5 clienti (ordinati per Brier score).
+- Usage standalone:
+  ```powershell
+  python -m src.analytics.calibration
+  ```
+- Integrazione in `run_all.py` con flag `--make-calibration`:
+  ```powershell
+  python -m src.pipeline.run_all --model catboost --make-calibration
+  ```
+
+#### 4.8.5 PROMPT S3 — Metriche evento-level per il policy classifier
+- Il modulo `src/analytics/event_policy_metrics.py` valuta le performance del classificatore di policy dominante per evento:
+  - **Confusion matrix** (true vs predicted policy): matrice normalizzata per riga (percentuali), mostra quanto spesso ogni policy vera viene predetta correttamente o confusa con altre.
+  - **Top-1 accuracy**: frazione di eventi in cui la policy predetta coincide esattamente con la policy vera.
+  - **Top-2 hit rate**: frazione di eventi in cui la policy vera è tra le top-2 policy predette (per probabilità).
+  - **Recall uplift**: confronto tra recall@k della policy predetta vs policy baseline (FIFO) per misurare il guadagno nel coverage delle fatture reali.
+- Segmentazioni disponibili:
+  - **Global**: medie su tutti gli eventi.
+  - **Per-cardinality-bucket**: k=1, k=2-3, k≥4 (eventi raggruppati per cardinalità).
+  - **Per-client**: top-10 clienti per volume eventi (minimum 2 eventi/client).
+- Il modulo richiede:
+  - `per_event_policy_scores.parquet`: recall@k per ogni policy per evento (colonne: cliente, event_key, fifo, lifo, same_period, largest, smallest, eomfirst, regmonth, quarter, seqblock, typeprio).
+  - `event_policy_predictions.parquet`: policy predetta e probabilità per evento (colonne: event_key, policy_pred, policy_true, proba_*).
+- Outputs:
+  - `data/curated/event_policy_metrics.parquet`: tabella KPI con colonne `segment_type`, `segment_value`, `n_events`, `top1_accuracy`, `top2_hit_rate`, `baseline_recall`, `predicted_recall`, `uplift_absolute`, `uplift_relative`.
+  - `data/curated/event_policy_confusion.parquet`: matrice di confusione normalizzata con colonne `policy_true` e una colonna per policy predetta.
+  - Console summary: stampa accuracy, uplift % per segmento, dimensione matrice di confusione.
+- Usage standalone:
+  ```powershell
+  python -m src.analytics.event_policy_metrics
+  ```
+- Integrazione in `run_all.py` con flag `--make-policy-metrics`:
+  ```powershell
+  python -m src.pipeline.run_all --make-policy-metrics
+  ```
+
+#### 4.8.6 PROMPT S4 — Streamlit: pagina KPI Dashboard
+- La pagina **KPI Dashboard** in `app/pages/kpi_dashboard.py` fornisce un'interfaccia interattiva per esplorare le metriche di ranking e calibrazione con filtri dinamici, grafici e download CSV.
+- **Architettura**:
+  - Modulo standalone con funzione `render_kpi_dashboard_page()` integrata nel router di `app/streamlit_app.py`.
+  - Caricamento dati cachato (`@st.cache_data`) per performance su 50-100k righe.
+  - Layout a tab: **Ranking** e **Calibration**.
+- **Filtri sidebar**:
+  - **Cliente multiplo**: multiselect per filtrare metriche per clienti specifici.
+  - **Bucket cardinalità**: selector per k=1, k=2-3, k≥4, all.
+  - **Modello**: selector per modello CatBoost/AutoGluon (nella tab Calibration).
+  - **Segmento**: selector per global/cardinality_bucket/cliente (nella tab Calibration).
+- **Tab Ranking**:
+  - **Global Metrics**: cards con precision@k, hit_rate@k, coverage@k per k∈{1,2,3,5} e MRR.
+  - **Cardinality Bucket Metrics**: tabella con metriche per bucket di cardinalità.
+  - **Per-Client Metrics**: tabella con ricerca full-text e ordinamento interattivo; mostra n_events, precision@3, hit_rate@3, coverage@3, nDCG@3, MRR per cliente.
+  - **Download CSV**: button per esportare metriche filtrate.
+- **Tab Calibration**:
+  - **Metric Cards**: Brier score, ECE, MCE per modello selezionato (segmento global).
+  - **Reliability Curves**: grafico Plotly a linee con pred_mean (x) vs obs_rate (y) per 20 bin equal-populated; include diagonale di calibrazione perfetta e tooltip con n_samples/bin.
+  - **Filtri grafici**: multiselect modelli, selector segmento, selector valore segmento.
+  - **Download CSV**: button per esportare summary e bins calibrazione.
+- **Requisiti input**:
+  - `data/curated/kpi_ranking.parquet` (output di `src/analytics/kpi_ranking.py`).
+  - `data/curated/calibration_summary.parquet` (output di `src/analytics/calibration.py`).
+  - `data/curated/calibration_bins.parquet` (output di `src/analytics/calibration.py`).
+- **Navigazione**: selezionare "KPI Dashboard" dal menu radio in sidebar; la pagina si carica automaticamente con dati filtrabili e interattivi.
+- **Performance**: cached data loading garantisce latenza <1s su reload; tabelle con pagination automatica per grandi dataset.
+- **Acceptance test**:
+  1. Avviare Streamlit: `streamlit run app/streamlit_app.py` (oppure `python -m streamlit run app/streamlit_app.py`).
+  2. Navigare alla pagina "KPI Dashboard".
+  3. Verificare caricamento tab Ranking con global metrics, bucket table, per-client table.
+  4. Testare filtri cliente e bucket cardinalità; verificare aggiornamento tabelle.
+  5. Testare ricerca full-text nella tabella per-client.
+  6. Navigare alla tab Calibration; verificare metric cards e grafico reliability curve.
+  7. Testare filtri modello/segmento; verificare aggiornamento grafico.
+  8. Scaricare CSV da entrambe le tab; verificare formato corretto.
+
 ### 4.10 Unified pipeline runner (`src/pipeline/run_all.py`)
 - Orchestrates the entire sequence with optional embeddings + clustering toggles.
 - Execution order described in Section 3.
 - Prima del training esegue un controllo di coerenza sui curated set (eventi, event_items, train_features): verifica cardinalità evento >0, importi non negativi, date documento coerenti (soglia 5%) e presenza delle colonne critiche del feature store; stampa una tabella riassuntiva e interrompe il run (exit code >0) se trova anomalie.
-- Flags: `--input`, `--docmap`, `--model`, `--make-embeddings`, `--run-hdbscan`, `--neighbors`, `--umap`, `--min-cluster-size`, `--min-samples`, `--verbose`.
+- Flags: `--input`, `--docmap`, `--model`, `--make-embeddings`, `--run-hdbscan`, `--neighbors`, `--umap`, `--min-cluster-size`, `--min-samples`, `--make-kpi`, `--make-calibration`, `--make-policy-metrics`, `--verbose`.
 - Example full refresh:
   ```powershell
   python -m src.pipeline.run_all \
@@ -342,6 +460,9 @@ Each stage reads the artefacts produced by prior steps and fails fast if prerequ
     --make-embeddings \
     --run-hdbscan \
     --umap \
+    --make-kpi \
+    --make-calibration \
+    --make-policy-metrics \
     --docmap data/curated/doc_map.parquet
   ```
 
