@@ -1,0 +1,8 @@
+{"timestamp": "2025-10-06T16:49:25.858Z", "level": "INFO", "logger": "__main__", "message": "Caricato events.parquet (8 righe)"}
+{"timestamp": "2025-10-06T16:49:25.863Z", "level": "INFO", "logger": "__main__", "message": "Caricato event_items.parquet (30 righe)"}
+{"timestamp": "2025-10-06T16:49:25.869Z", "level": "INFO", "logger": "__main__", "message": "Caricato client_pattern_scores.parquet (2 righe)"}
+{"timestamp": "2025-10-06T16:49:25.883Z", "level": "INFO", "logger": "__main__", "message": "Caricato pattern_table.parquet (2 righe)"}
+{"timestamp": "2025-10-06T16:49:25.898Z", "level": "INFO", "logger": "__main__", "message": "Caricato client_rules_accuracy.parquet (2 righe)"}
+{"timestamp": "2025-10-06T16:49:25.935Z", "level": "INFO", "logger": "__main__", "message": "Caricato client_model_metrics_catboost.parquet (2 righe)"}
+{"timestamp": "2025-10-06T16:49:25.949Z", "level": "INFO", "logger": "__main__", "message": "Caricato client_model_metrics_autogluon.parquet (2 righe)"}
+{"timestamp": "2025-10-06T16:49:30.720Z", "level": "INFO", "logger": "__main__", "message": "Generazione report per C001"}
