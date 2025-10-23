@@ -17,6 +17,8 @@ import streamlit as st
 
 from app.pages.clusters import render_clusters_page
 from app.pages.kpi_dashboard import render_kpi_dashboard_page
+from app.pages.pattern_card_v2 import render_pattern_card_v2
+from app.pages.policy_iq import render_policy_iq
 
 from src.analytics.pattern_detectors import POLICY_NAMES, infer_pattern_label
 from src.report.nlg_patterns import render_pattern_summary
@@ -45,7 +47,7 @@ PERIODICITY_COLUMNS = [
     "periodicity_monthly",
 ]
 
-PAGE_OPTIONS = ("Pattern Card", "KPI Dashboard", "Data Explorer", "Clusters")
+PAGE_OPTIONS = ("Pattern Card", "KPI Dashboard", "Data Explorer", "Clusters", "Policy IQ")
 
 
 @st.cache_data(show_spinner=False)
@@ -151,49 +153,303 @@ def _load_champion_metadata() -> Dict[str, Any]:
     return metadata
 
 
+def _load_json_log_tail(log_path: Path, max_lines: int = 100) -> List[Dict[str, Any]]:
+    """Load last N lines from JSON log file."""
+    if not log_path or not log_path.exists():
+        return []
+    
+    lines: List[Dict[str, Any]] = []
+    try:
+        with log_path.open("r", encoding="utf-8") as handle:
+            for line in handle:
+                try:
+                    payload = json.loads(line)
+                    lines.append(payload)
+                except json.JSONDecodeError:
+                    continue
+    except FileNotFoundError:
+        return []
+    
+    return lines[-max_lines:]
+
+
 def _render_developer_panel(metrics: Dict[str, Any]) -> None:
+    """
+    Enhanced Developer Mode overlay with JSON log viewer, timing table, memory tracker, and warning/error parser.
+    PROMPT S10 implementation.
+    """
     st.markdown("---")
-    st.header("Developer diagnostics")
-
-    sections = metrics.get("sections", [])
-    if sections:
-        st.subheader("Section latencies (ms)")
-        st.dataframe(pd.DataFrame(sections).sort_values("duration_ms", ascending=False), use_container_width=True)
-    else:
-        st.info("Nessuna latenza disponibile per questa sessione.")
-
-    df_map: Dict[str, Dict[str, Any]] = metrics.get("dataframes", {})
-    if df_map:
-        st.subheader("Dataframe footprint")
-        st.dataframe(
-            pd.DataFrame(df_map.values()).sort_values("memory_mb", ascending=False),
-            use_container_width=True,
-        )
-
-    log_records = metrics.get("logs")
-    if log_records:
-        st.subheader("Warnings / Errors dal log JSON")
-        log_path = log_records.get("path")
-        if log_path:
-            st.caption(f"File log: {log_path}")
-        cols = st.columns(2)
-        cols[0].markdown("**Primi 3**")
-        if log_records.get("first"):
-            cols[0].json(log_records["first"])
+    st.header("🛠️ Developer Mode — Observability Panel")
+    
+    st.markdown("""
+    Enhanced diagnostics for debugging and performance monitoring:
+    - **JSON Log Viewer**: Tail of latest run log with filtering
+    - **Timing Tracker**: Section-by-section latencies with bars
+    - **Memory Footprint**: Dataframe sizes and memory usage
+    - **Warnings/Errors**: Last 10 warning/error entries parsed from log
+    """)
+    
+    # Create tabs for organized display
+    tabs = st.tabs([
+        "⏱️ Timing",
+        "💾 Memory",
+        "📋 Logs",
+        "⚠️ Warnings",
+        "🏆 Champion"
+    ])
+    
+    # ========================================================================
+    # Tab 1: Timing Tracker
+    # ========================================================================
+    with tabs[0]:
+        st.subheader("Section Latencies")
+        sections = metrics.get("sections", [])
+        
+        if sections:
+            # Create DataFrame with timing data
+            timing_df = pd.DataFrame(sections).sort_values("duration_ms", ascending=False)
+            
+            # Add bar visualization
+            if "duration_ms" in timing_df.columns:
+                max_duration = timing_df["duration_ms"].max()
+                timing_df["progress"] = timing_df["duration_ms"] / max_duration if max_duration > 0 else 0
+            
+            # Display with formatted columns
+            display_cols = ["stage", "duration_ms"]
+            if "duration_ms" in timing_df.columns:
+                timing_df["duration_formatted"] = timing_df["duration_ms"].apply(lambda x: f"{x:.1f} ms")
+                display_cols = ["stage", "duration_formatted", "progress"]
+            
+            st.dataframe(
+                timing_df[display_cols] if all(c in timing_df.columns for c in display_cols) else timing_df,
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "progress": st.column_config.ProgressColumn(
+                        "Relative Duration",
+                        help="Duration relative to slowest section",
+                        format="%.2f",
+                        min_value=0,
+                        max_value=1,
+                    )
+                }
+            )
+            
+            # Summary metrics
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                total_ms = timing_df["duration_ms"].sum()
+                st.metric("Total Time", f"{total_ms:.1f} ms")
+            with col2:
+                avg_ms = timing_df["duration_ms"].mean()
+                st.metric("Average Section Time", f"{avg_ms:.1f} ms")
+            with col3:
+                slowest = timing_df.iloc[0]["stage"] if not timing_df.empty else "N/A"
+                st.metric("Slowest Section", slowest)
         else:
-            cols[0].info("Nessun warning/error iniziale registrato.")
-        cols[1].markdown("**Ultimi 3**")
-        if log_records.get("last"):
-            cols[1].json(log_records["last"])
+            st.info("No timing data available for this session.")
+    
+    # ========================================================================
+    # Tab 2: Memory Footprint
+    # ========================================================================
+    with tabs[1]:
+        st.subheader("Dataframe Memory Usage")
+        df_map: Dict[str, Dict[str, Any]] = metrics.get("dataframes", {})
+        
+        if df_map:
+            memory_df = pd.DataFrame(df_map.values()).sort_values("memory_mb", ascending=False)
+            
+            # Add progress bar for memory
+            total_memory = 0.0
+            if "memory_mb" in memory_df.columns:
+                total_memory = memory_df["memory_mb"].sum()
+                memory_df["pct_of_total"] = memory_df["memory_mb"] / total_memory if total_memory > 0 else 0
+            
+            st.dataframe(
+                memory_df,
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "memory_mb": st.column_config.NumberColumn(
+                        "Memory (MB)",
+                        help="Estimated memory usage in megabytes",
+                        format="%.2f MB"
+                    ),
+                    "pct_of_total": st.column_config.ProgressColumn(
+                        "% of Total",
+                        help="Percentage of total memory usage",
+                        format="%.1f%%",
+                        min_value=0,
+                        max_value=1,
+                    )
+                }
+            )
+            
+            # Summary metrics
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("Total Memory", f"{total_memory:.2f} MB")
+            with col2:
+                largest_df = memory_df.iloc[0]["name"] if not memory_df.empty and "name" in memory_df.columns else "N/A"
+                st.metric("Largest DataFrame", largest_df)
+            with col3:
+                total_rows = memory_df["rows"].sum() if "rows" in memory_df.columns else 0
+                st.metric("Total Rows", f"{int(total_rows):,}")
         else:
-            cols[1].info("Nessun warning/error recente registrato.")
-
-    champion_meta = metrics.get("champion")
-    st.subheader("Champion model metadata")
-    if champion_meta:
-        st.json(champion_meta)
-    else:
-        st.info("Nessun file models/champion.json disponibile o privo di seed/split.")
+            st.info("No dataframe metrics available.")
+    
+    # ========================================================================
+    # Tab 3: JSON Log Viewer
+    # ========================================================================
+    with tabs[2]:
+        st.subheader("JSON Log Viewer")
+        
+        # Find log file
+        log_path = get_current_log_file()
+        if log_path is None or not log_path.exists():
+            candidate_logs = sorted((BASE_DIR / "logs").glob("run_*.jsonl"), reverse=True)
+            log_path = candidate_logs[0] if candidate_logs else None
+        
+        if log_path and log_path.exists():
+            st.caption(f"**Log file:** `{log_path}`")
+            
+            # Load tail of log
+            log_entries = _load_json_log_tail(log_path, max_lines=100)
+            
+            if log_entries:
+                # Filter controls
+                col1, col2 = st.columns(2)
+                with col1:
+                    level_filter = st.multiselect(
+                        "Filter by Level",
+                        options=["DEBUG", "INFO", "WARNING", "ERROR"],
+                        default=["INFO", "WARNING", "ERROR"],
+                        key="dev_log_level_filter"
+                    )
+                with col2:
+                    module_options = list(set(entry.get("module", "unknown") for entry in log_entries))
+                    module_filter = st.multiselect(
+                        "Filter by Module",
+                        options=sorted(module_options),
+                        key="dev_log_module_filter"
+                    )
+                
+                # Apply filters
+                filtered_entries = [
+                    entry for entry in log_entries
+                    if entry.get("level") in level_filter
+                    and (not module_filter or entry.get("module") in module_filter)
+                ]
+                
+                st.write(f"**Showing {len(filtered_entries)} of {len(log_entries)} entries (last 100 lines)**")
+                
+                # Display entries in expander
+                for i, entry in enumerate(reversed(filtered_entries[-20:])):  # Show last 20 filtered
+                    level = entry.get("level", "INFO")
+                    timestamp = entry.get("timestamp", "")
+                    message = entry.get("message", "")
+                    module = entry.get("module", "")
+                    
+                    # Color code by level
+                    level_emoji = {"DEBUG": "🔍", "INFO": "ℹ️", "WARNING": "⚠️", "ERROR": "❌"}.get(level, "📝")
+                    
+                    with st.expander(f"{level_emoji} [{level}] {timestamp[:19]} — {message[:60]}..."):
+                        st.json(entry)
+            else:
+                st.info("No log entries found.")
+        else:
+            st.warning("No log file available.")
+    
+    # ========================================================================
+    # Tab 4: Warnings & Errors
+    # ========================================================================
+    with tabs[3]:
+        st.subheader("Warnings & Errors Parser")
+        log_records = metrics.get("logs")
+        
+        if log_records:
+            log_path = log_records.get("path")
+            if log_path:
+                st.caption(f"**Log file:** `{log_path}`")
+            
+            # Load last 10 warnings/errors
+            if log_path:
+                log_path_obj = Path(log_path)
+                if log_path_obj.exists():
+                    all_entries = _load_json_log_tail(log_path_obj, max_lines=1000)
+                    warnings_errors = [
+                        entry for entry in all_entries
+                        if entry.get("level") in {"WARNING", "ERROR"}
+                    ][-10:]
+                    
+                    if warnings_errors:
+                        st.write(f"**Last {len(warnings_errors)} warning/error entries:**")
+                        
+                        # Create table
+                        error_data = []
+                        for entry in reversed(warnings_errors):
+                            error_data.append({
+                                "Timestamp": entry.get("timestamp", "")[:19],
+                                "Level": entry.get("level", ""),
+                                "Module": entry.get("module", ""),
+                                "Message": entry.get("message", "")[:80]
+                            })
+                        
+                        error_df = pd.DataFrame(error_data)
+                        st.dataframe(
+                            error_df,
+                            use_container_width=True,
+                            hide_index=True,
+                            column_config={
+                                "Level": st.column_config.TextColumn(
+                                    "Level",
+                                    width="small"
+                                )
+                            }
+                        )
+                        
+                        # Details in expanders
+                        st.write("**Full Details:**")
+                        for i, entry in enumerate(reversed(warnings_errors)):
+                            level_emoji = "⚠️" if entry.get("level") == "WARNING" else "❌"
+                            with st.expander(f"{level_emoji} {entry.get('timestamp', '')[:19]} — {entry.get('message', '')[:50]}..."):
+                                st.json(entry)
+                    else:
+                        st.success("✅ No warnings or errors in recent log entries!")
+                else:
+                    st.warning("Log file not found.")
+            else:
+                st.info("No log path available.")
+        else:
+            st.info("No log data available.")
+    
+    # ========================================================================
+    # Tab 5: Champion Model Metadata
+    # ========================================================================
+    with tabs[4]:
+        st.subheader("Champion Model Metadata")
+        champion_meta = metrics.get("champion")
+        
+        if champion_meta:
+            # Display as cards
+            col1, col2 = st.columns(2)
+            with col1:
+                if "model" in champion_meta:
+                    st.metric("Model", champion_meta["model"])
+                if "seed" in champion_meta and champion_meta["seed"]:
+                    st.metric("Seed", champion_meta["seed"])
+            with col2:
+                if "trained_at" in champion_meta:
+                    st.metric("Trained At", champion_meta["trained_at"])
+                if "split" in champion_meta and champion_meta["split"]:
+                    st.write("**Split Config:**")
+                    st.json(champion_meta["split"])
+            
+            # Full JSON
+            with st.expander("View Full Metadata JSON"):
+                st.json(champion_meta)
+        else:
+            st.info("No champion.json file available or missing seed/split metadata.")
 
 
 @st.cache_data(show_spinner=False)
@@ -1439,21 +1695,34 @@ def main() -> None:
             _render_developer_panel(developer_metrics)
         return
 
-    render_pattern_card(
-        selected_client=selected_client,
-        events=events,
-        event_items=event_items,
-        pattern_scores=pattern_scores,
-        pattern_table_df=pattern_table_df,
-        rules_metrics_df=rules_metrics_df,
-        cat_metrics_df=cat_metrics_df,
-        auto_metrics_df=auto_metrics_df,
-        feature_repository=feature_repository,
-        cat_feature_cols=cat_feature_cols,
-        cat_cat_indices=cat_cat_indices,
-        auto_feature_cols=auto_feature_cols,
-        developer_metrics=developer_metrics,
-    )
+    if page == "Policy IQ":
+        @_section_tracker(developer_metrics, "UI.PolicyIQ")
+        def _render_policy_iq() -> None:
+            render_policy_iq(data_dir=BASE_DIR / "data")
+
+        _render_policy_iq()
+        if developer_mode:
+            developer_metrics["logs"] = _load_warning_log_records()
+            developer_metrics["champion"] = _load_champion_metadata()
+            _render_developer_panel(developer_metrics)
+        return
+
+    # Use Pattern Card v2 (refactored 2-column layout + explainability)
+    @_section_tracker(developer_metrics, "UI.PatternCard_v2")
+    def _render_pattern_card_v2() -> None:
+        render_pattern_card_v2(
+            selected_client=selected_client,
+            events=events,
+            pattern_scores=pattern_scores,
+            pattern_table_df=pattern_table_df,
+            feature_repository=feature_repository,
+            cat_feature_cols=cat_feature_cols,
+            cat_cat_indices=cat_cat_indices,
+            auto_feature_cols=auto_feature_cols,
+            developer_metrics=developer_metrics,
+        )
+    
+    _render_pattern_card_v2()
 
     if developer_mode:
         developer_metrics["logs"] = _load_warning_log_records()

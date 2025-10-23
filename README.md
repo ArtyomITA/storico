@@ -326,14 +326,162 @@ Each stage reads the artefacts produced by prior steps and fails fast if prerequ
 
 ### 4.9 Interactive application (`app/streamlit_app.py`)
 - Four pages: Pattern Card (default), KPI Dashboard, Data Explorer, Clusters.
-- **Pattern Card**: dashboard per cliente con metriche pattern, policy dominante, grafico recall@k e tabelle eventi/fatture.
+- **Pattern Card v2**: dashboard per cliente con layout 2-colonne per migliorare leggibilità e immediatezza (vedi sezione 4.9.1).
 - **KPI Dashboard**: interfaccia interattiva per metriche di ranking (precision@k, hit_rate@k, nDCG@k, MRR, coverage@k) e calibrazione (Brier score, ECE, MCE, reliability curves); filtri per cliente, bucket cardinalità, modello; download CSV (vedi sezione 4.8.6).
 - **Data Explorer**: filtri multipli (cliente, intervallo date, tipo documento, chiave contabile), ricerca full-text, tabella interattiva con tutte le colonne e download CSV immediato della vista filtrata; tab dedicate per analisi cadence, policy, cardinalità con grafici Plotly.
 - **Clusters**: visualizzazione UMAP/t-SNE dei cluster HDBSCAN con colori per cluster, sidebar per filtri, tabelle cluster statistics e membri.
 - La sidebar include il toggle **Developer mode** che, se attivo, mostra un overlay diagnostico con metriche tecniche e log.
 - Leverages caching (`st.cache_data` / `st.cache_resource`) to minimise reload times.
 - Reads the same curated artefacts listed above and surfaces warnings for missing dependencies.
+
+#### 4.9.1 PROMPT S5 — Pattern Card v2 (layout a griglia + heatmap calendario + tooltip numerici)
+- Il modulo `app/pages/pattern_card_v2.py` rifattorizza la Pattern Card con layout 2-colonne per ottimizzare visualizzazione e comprensibilità immediate.
+- **Architettura**:
+  - **Colonna sinistra (Visual Analytics)**: componenti grafici per analisi temporale e cadenza.
+    - **Calendar heatmap (ultimi 12 mesi)**: heatmap giorno-settimana × mese con conteggio eventi per cella; tooltip mostrano valori esatti, etichette mesi chronological-sorted; identifica pattern settimanali/mensili visivamente.
+    - **Cadence histogram**: distribuzione gap inter-evento con marker verticali per periodicità comuni (7/14/30 giorni); tooltip indicano gap esatto e frequenza; bins ottimizzati per leggibilità.
+    - **ACF (Autocorrelation Function)**: grafico autocorrelazione con confidence bands (95%); tooltip mostrano lag e ACF esatto (3 decimali); identifica regolarità temporali.
+  - **Colonna destra (Metrics Dashboard)**: metriche numeriche e policy analysis.
+    - **Cardinality distribution**: histogram con marker su k_mode; tooltip con k esatto e frequenza eventi; cards mostrano `k_mode` (moda cardinalità) e `k_entropy` (Shannon entropy normalizzato).
+    - **Policy bars**: barre recall per policy dominante con valori percentuali annotati sopra le barre; tooltip includono recall esatto e confidence globale del pattern; titolo mostra confidence complessivo.
+    - **Pattern label cards**: metrics cards con pattern label riconosciuto, confidence score, stability index.
+  - **Claim + Evidence (full-width)**: riquadro styled che chiama `nlg_patterns.render_pattern_summary()` e mostra frasi descrittive con percentuali/indici in lista puntata; background azzurro con border sinistra per evidenziare claims chiave.
+  - **Additional Metrics (full-width)**: metrics cards supplementari con DOW/DOM concentration, numero eventi totali, gap medio giorni.
+- **Tooltip numerici**: tutti i grafici Plotly includono `hovertemplate` con valori esatti (no arrotondamenti visivi); formato `<b>Label: %{value}</b>` per evidenziare numeri chiave.
+- **Performance**: rendering rapido su dataset con 100+ eventi grazie a computazioni vettorizzate (numpy/pandas); nessun loop Python nelle funzioni di plotting.
+- **Input richiesti**:
+  - `events.parquet`: con colonne `cliente`, `event_key`, `data_pareggio`, `inter_event_gap_days`, `n_righe_evento`.
+  - `client_pattern_scores.parquet`: con policy scores, k_mode, k_entropy, confidence, dow/dom concentration.
+  - `pattern_table.parquet`: con pattern_label, confidence, stability_index per client.
+- **Acceptance test**:
+  1. Avviare Streamlit: `streamlit run app/streamlit_app.py`.
+  2. Selezionare cliente dalla sidebar; verificare Pattern Card è pagina default.
+  3. **Layout**: verificare 2 colonne visibili side-by-side su desktop (≥1200px width).
+  4. **Visuals**: calendario ultimi 12 mesi mostra eventi per day-of-week × month; histogram gap con marker 7/14/30 giorni; ACF con confidence bands.
+  5. **Metrics**: cardinality histogram con k_mode marker; policy bars con percentuali annotate; pattern label cards.
+  6. **Tooltips**: hover su qualsiasi grafico mostra valori numerici esatti (calendario: # eventi, histogram: frequenza, ACF: correlation value, policy bars: recall % + confidence).
+  7. **Claim + Evidence**: riquadro azzurro con lista puntata di claims generati da `render_pattern_summary()`; frasi includono percentuali/indici numerici.
+  8. **Performance**: caricamento < 2s su cliente con 50 eventi; nessun warning Streamlit; testi non troncati.
+- **Note tecniche**:
+  - Calendar heatmap: filtro last 12 months con `pd.DateOffset(months=12)`, pivot table con `aggfunc='count'`, colorscale Blues con colorbar.
+  - ACF: computazione manuale con gaps demeaned, covariance/variance ratio, confidence = 1.96/sqrt(n).
+  - Cardinality entropy: Shannon entropy con `scipy.stats.entropy(value_counts.values)`, cast esplicito a `float` per type safety.
+  - Claim + Evidence: styled HTML container con CSS custom (background #F0F8FF, border-left #4682B4 4px); `unsafe_allow_html=True` per rendering.
+- **Integrazione**: routing in `streamlit_app.py` main() chiama `render_pattern_card_v2()` per pagina "Pattern Card"; backward compatibility mantenuta con caricamento dati esistente da `load_curated_tables()`.
 - Run `streamlit run app/streamlit_app.py` after pipeline refresh.
+
+#### 4.9.2 PROMPT S7 — Pannello Explainability: SHAP top-k + what-if policy gating
+- Il pannello **Explainability** in Pattern Card v2 fornisce spiegazioni interpretabili delle predizioni del modello e permette simulazioni what-if per policy gating.
+- **Obiettivo**: rispondere a "**perché** il modello propone queste fatture?" e "cosa succede se applico un boost su policy X?".
+- **Componenti**:
+  - **Event Selector**: dropdown per selezionare evento specifico da analizzare (tutti gli event_key del cliente).
+  - **Model Selector**: radio buttons per scegliere CatBoost o AutoGluon.
+  - **Top-k Proposals Table**: tabella con prime k fatture ordinate per p_i (probabilità modello), mostra numero documento, p_i, label reale; slider k per regolare numero fatture visualizzate (1–20).
+  - **SHAP Explanations (CatBoost only)**: per le prime 2 fatture nella top-k, expander con top-3 feature SHAP (feature name, valore feature, contributo SHAP); ordinamento per absolute SHAP value decrescente; display in tabella formattata con contributi SHAP a 4 decimali.
+  - **What-If Policy Gating**: checkboxes per attivare boost su policy specifiche (Same Period, EOM First, Largest, FIFO, LIFO); slider α (boost multiplier) da 0.0 a 1.0 (default 0.2 = +20%); formula applicata: `p_i' = p_i × (1 + α)` per fatture che soddisfano policy attiva; ricomputo ranking in tempo reale; tabella comparativa con p_i originale, p_i boosted, rank originale, rank boosted, Δ rank (color-coded: verde se salita, rosso se discesa).
+  - **Summary Metrics**: cards con conteggio fatture mosse in alto, mosse in basso, invariate dopo boost.
+- **Funzionalità chiave**:
+  - **apply_policy_boost()**: funzione helper che applica boost composito su multiple policy con clipping [0, 1] e ricomputo ranking.
+  - **SHAP computation**: usa `catboost.get_feature_importance(type="ShapValues")` per ottenere contributi Shapley per ogni row; gestisce fallback se SHAP non disponibile (warning ma continua rendering).
+  - **Interactive recalculation**: cambio α o toggle policy → ricalcolo istantaneo senza reload pagina grazie a Streamlit reactivity.
+  - **Color-coded delta**: Δ rank positivo (verde) = fattura salita in classifica, negativo (rosso) = scesa, zero (grigio) = invariata; facilita identificazione impatto visivo del boost.
+- **Input richiesti**:
+  - `events.parquet`: con colonne cliente, event_key, data_pareggio.
+  - `train_features.parquet` (feature_repository): matrice feature con tutte le colonne per CatBoost/AutoGluon, policy indicators (same_period, eomfirst, fifo, lifo, largest, etc.), label reale, numero_documento.
+  - Modelli trained: `models/catboost.cbm`, `models/calibrator.pkl`, `models/autogluon/` (se disponibili).
+- **Performance**: SHAP computation on-demand per evento selezionato (no precompute); latenza < 1s su evento con 50 fatture; policy boost recalculation < 100ms (vectorized pandas operations).
+- **Acceptance test**:
+  1. Navigare a Pattern Card, scrollare fino a "Explainability Panel".
+  2. Selezionare evento da dropdown; verificare caricamento Top-k table con p_i.
+  3. **SHAP**: (solo CatBoost) espandere expander prime 2 fatture; verificare top-3 feature con valori e contributi SHAP; nessun errore se SHAP non disponibile (warning graceful).
+  4. **What-If**: attivare checkbox "Same Period" con α=0.2; verificare tabella comparativa mostra p_i boosted, Δ rank color-coded (verde/rosso); summary cards aggiornate con # mosse.
+  5. Provare multiple policy attive (es. Same Period + EOM First); verificare boost cumulativo applicato correttamente.
+  6. Cambiare α slider da 0.2 → 0.5; verificare ricalcolo immediato senza crash.
+  7. Performance: ricalcolo < 500ms; nessun warning Streamlit; tooltips leggibili.
+- **Note tecniche**:
+  - SHAP values: `shap_values[row_idx, :-1]` (escludi ultima colonna = base value); sorting per `abs(shap_val)` per rilevanza.
+  - Policy boost cumulative: loop su policy attive, apply boost sequenziale con clip dopo ogni step (previene overflow > 1.0).
+  - Rank delta: `rank_original - rank_boosted`; positivo = salita (desiderabile per fatture rilevanti).
+  - Styled dataframe: `df.style.applymap(color_rank_delta, subset=["Δ Rank"])` con CSS inline per background/foreground coloring.
+  - Fallback graceful: se feature_repository vuoto o modello non disponibile, panel non renderizzato (no crash).
+- **Integrazione**: render_explainability_panel() chiamato in render_pattern_card_v2() se feature_repository e cat_feature_cols disponibili; altrimenti skippa panel silently.
+
+#### 4.9.3 PROMPT S9 — Policy IQ page: matrice di confusione, uplift e explain tiles
+- La pagina **Policy IQ** (`app/pages/policy_iq.py`) fornisce auditabilità e interpretabilità del classificatore di policy.
+- **Obiettivo**: rispondere a "quanto è accurato il classificatore di policy?" e "quali policy dominano per questo cliente?".
+- **Componenti**:
+  - **Confusion Matrix (Sezione 1)**: heatmap normalizzata per riga (true policy vs predicted policy) con annotazioni percentuali; colorscale Blues con tooltip dettagliati (True, Predicted, Rate); KPI cards con top-1 accuracy, top-2 hit rate, total events.
+  - **Uplift Analysis (Sezione 2)**: tabella comparativa con baseline recall@k (FIFO) vs policy-guided recall@k; breakdown per segment_type (global, cardinality_bucket, cliente, trimestre); colonne: # Events, Baseline Recall@k, Policy Recall@k, Uplift (abs), Uplift (%); metric card con global uplift % (miglioramento relativo su baseline).
+  - **Explain Tiles (Sezione 3)**: per cliente selezionato, mostra top-3 policy dominanti con: regola human-readable (es. "Pay oldest invoices first"), recall medio (da per_event_policy_scores), stabilità (frequenza con cui policy è predetta come migliore), micro-esempio espandibile (evento reale con predicted policy, true policy, accuracy, mean recall, top-3 policy probabilities).
+- **Funzionalità chiave**:
+  - **plot_policy_confusion_matrix()**: Plotly heatmap con row-normalization, percentage text annotations, hover con (True, Predicted, Rate), colorbar con tickformat percentuale.
+  - **render_uplift_table()**: formatta tabella con percentuali formattate (es. "+5.2%"), ordina per uplift relativo decrescente, global metric prominente.
+  - **extract_dominant_policies()**: calcola mean recall per policy (media su policy_* columns in per_event_policy_scores), stabilità da predictions (fraction con policy_pred == policy_name), trova esempio evento per ciascuna policy.
+  - **render_policy_tile()**: styled HTML tile con border-left colorato, regola descrittiva, recall/stability percentuali, expander con micro-esempio (predicted vs true policy, accuracy badge, top-3 probabilities).
+- **Input richiesti**:
+  - `event_policy_confusion.parquet`: matrice confusione con policy_true column + predicted policy columns (values: normalized rates 0-1).
+  - `event_policy_metrics.parquet`: metriche uplift con colonne segment_type, segment_value, n_events, top1_accuracy, top2_hit_rate, baseline_recall, predicted_recall, uplift_absolute, uplift_relative.
+  - `per_event_policy_scores.parquet`: score per policy per evento con colonne cliente, event_key, data_evento, policy_* (recall per policy).
+  - `event_policy_predictions.parquet`: predizioni policy con colonne event_key, policy_pred, policy_true, accuracy, mean_recall, proba_* (probabilities per policy).
+- **Performance**: lazy loading con @st.cache_data (ttl=3600s); confusion matrix rendering < 500ms; uplift table responsive su 100+ segmenti; tile rendering incrementale (no lag).
+- **Acceptance test**:
+  1. Navigare a "Policy IQ" page da sidebar.
+  2. **Confusion Matrix**: verificare heatmap caricata con percentuali annotate; tooltip mostra True/Predicted/Rate; KPI cards mostrano accuracy/hit rate/events.
+  3. **Uplift Table**: verificare tabella con baseline vs policy recall; uplift absolute/relative formattati come percentuali; global metric card prominente con valore uplift %.
+  4. **Explain Tiles**: selezionare cliente da dropdown; verificare top-3 policy tiles mostrano regola, recall, stabilità; espandere micro-esempio; verificare predicted/true policy, accuracy badge, top-3 probabilities.
+  5. Performance: caricamento < 2s; no warning Streamlit; navigazione fluida tra sezioni.
+  6. Grafici: no seaborn (solo Plotly); colorscale appropriata; annotazioni leggibili.
+- **Note tecniche**:
+  - Confusion matrix: row-normalization implementata a livello dati (dati già normalizzati in event_policy_confusion.parquet da PROMPT S3).
+  - Uplift calculation: uplift_relative = (predicted_recall - baseline_recall) / baseline_recall × 100%.
+  - Dominant policy extraction: sort policies by mean_recall desc, take top-3, filtra policy con zero score.
+  - Policy rules: dict lookup con human-readable descriptions (fifo → "Pay oldest invoices first", largest → "Pay largest invoices first", etc.).
+  - Example event: cerca first row in predictions_df dove policy_pred == policy_name; se non trovato, tile non mostra expander.
+  - Stability metric: count(policy_pred == policy_name) / count(all events for client) da event_policy_predictions.parquet.
+- **Integrazione**: routing in `streamlit_app.py` main() con page == "Policy IQ"; chiama render_policy_iq(data_dir=BASE_DIR / "data"); developer mode compatibile (metrics tracking, log/champion display).
+
+#### 4.9.4 PROMPT S10 — Developer Mode overlay: log JSON, timing, memoria e warning
+- **Developer Mode** è un toggle nella sidebar che attiva un pannello di osservabilità avanzata senza impattare l'utente business.
+- **Obiettivo**: fornire visibilità durante debug su performance (timing), footprint memoria (dataframe sizes), log stream (JSON tail), warning/error recenti.
+- **Componenti** (organizzati in 5 tabs):
+  1. **⏱️ Timing Tab**: tabella section-by-section latencies con barre di progresso relative; integra decorator `@log_timed` che popola `developer_metrics["sections"]`; mostra stage name, duration_ms, progress bar (% rispetto al section più lento); summary cards con total time, average section time, slowest section.
+  2. **💾 Memory Tab**: dimensioni dataframe correnti (righe, MB stimati) da `developer_metrics["dataframes"]`; mostra name, rows, memory_mb, % of total memory; summary cards con total memory (MB), largest dataframe name, total rows across all dataframes.
+  3. **📋 Logs Tab**: tail di ultimo file `logs/run_*.jsonl` (100 righe); filtri multiselect per level (DEBUG/INFO/WARNING/ERROR) e module; mostra last 20 filtered entries in expander con JSON completo per entry; emoji per level (🔍 DEBUG, ℹ️ INFO, ⚠️ WARNING, ❌ ERROR).
+  4. **⚠️ Warnings Tab**: parser dedicato per ultimi 10 warning/error entries dal JSON log; tabella con timestamp, level, module, message (troncato a 80 char); expander per ciascun entry con JSON completo; success message ("✅ No warnings or errors!") se nessun warning/error trovato.
+  5. **🏆 Champion Tab**: metadata da `models/champion.json`; cards con model, trained_at, seed, split; expander con full JSON metadata; info message se champion.json mancante o privo di seed/split.
+- **Funzionalità chiave**:
+  - **_load_json_log_tail()**: carica ultime N righe da JSON log (default 100), parse JSON per riga con fallback su JSONDecodeError, ritorna lista di dict.
+  - **Conditional rendering**: overlay appare solo se `developer_mode == True`; quando off, nessun impatto su performance (no log loading, no dataframe inspection).
+  - **Tab organization**: st.tabs() per organizzare componenti in modo compatto; evita scroll eccessivo; ciascun tab è self-contained.
+  - **Progress bars**: timing e memory tabs usano st.column_config.ProgressColumn per visualizzazione barre inline nella dataframe.
+  - **Summary metrics**: ciascun tab include metric cards con aggregazioni chiave (totale, massimo, conteggi).
+- **Input richiesti**:
+  - `logs/run_*.jsonl`: JSON log file con entries formatted come `{"timestamp": "...", "level": "...", "module": "...", "message": "...", ...}`.
+  - `developer_metrics`: dict popolato da main() con keys `sections` (list of timing dicts), `dataframes` (dict of df metadata), `logs` (parsed warning/error entries), `champion` (champion.json metadata).
+  - `@log_timed` decorator: applicato a funzioni/metodi per tracciare timing; aggiunge entry a `metrics["sections"]` con stage name e duration_ms.
+- **Performance considerations**:
+  - Log loading: lazy (solo quando developer mode attivo); tail di 100 righe < 50ms anche su log 10k righe.
+  - Memory inspection: snapshot istantaneo dei dataframe correnti; nessun overhead quando off.
+  - Timing tracking: decorator overhead trascurabile (< 1ms per section); usa time.perf_counter() per precisione.
+  - Tab rendering: solo tab attivo è renderizzato; switching tra tab istantaneo.
+- **Acceptance test**:
+  1. Navigare a qualsiasi pagina (Pattern Card, KPI Dashboard, Clusters, Policy IQ).
+  2. **Toggle OFF (default)**: verificare nessun pannello developer visibile; performance normale; no lag o warning Streamlit.
+  3. **Toggle ON**: attivare "Developer mode" in sidebar; verificare overlay appare dopo il contenuto principale della pagina (dopo st.markdown("---")).
+  4. **Timing Tab**: verificare tabella section latencies popolata con stage names, duration_ms, progress bars; summary cards con totali; ordinamento decrescente per duration_ms.
+  5. **Memory Tab**: verificare tabella dataframes con name, rows, memory_mb, % of total; summary cards con total memory, largest df, total rows.
+  6. **Logs Tab**: verificare tail di log caricato (caption con log path); filtri level e module funzionanti; log entries in expander con JSON completo; emoji corretti per level.
+  7. **Warnings Tab**: verificare ultimi 10 warning/error entries in tabella (timestamp, level, module, message); expander con JSON completo; success message se nessun warning.
+  8. **Champion Tab**: verificare metadata cards (model, trained_at, seed, split); expander con full JSON; info message se champion.json mancante.
+  9. **Performance**: switching tra tab istantaneo (< 100ms); no lag o freeze; disattivare toggle → overlay scompare immediatamente.
+- **Note tecniche**:
+  - Developer mode state: gestito con st.sidebar.checkbox("Developer mode", value=False); session_state implicito (no explicit st.session_state management richiesto per toggle base).
+  - Log tail: implementato con file.readlines() + parse JSON; fallback graceful su JSONDecodeError (skippa riga malformata, continua parsing).
+  - Timing decorator: `@log_timed` definito in `src/utils/logging_setup.py`; decorator wrapper che misura duration, appende a metrics["sections"].
+  - Memory estimation: `memory_mb = (rows × columns × 8) / (1024^2)` (assunzione 8 bytes per cella, tipo float64); approssimazione conservativa.
+  - Tabbed layout: st.tabs() ritorna tuple di tab containers; write content in `with tabs[i]:` context.
+  - Progress column config: `st.column_config.ProgressColumn()` richiede min_value=0, max_value=1, values normalizzati 0-1.
+- **Integrazione**: toggle in sidebar accessibile da tutte le pagine; `_render_developer_panel(developer_metrics)` chiamato alla fine di ogni page render se developer_mode == True; metrics dict popolato incrementalmente durante page render con `@_section_tracker` decorator.
 
 #### 4.8.3 PROMPT S1 — KPI estesi per ranking
 - Il modulo `src/analytics/kpi_ranking.py` calcola metriche di ranking estese su hold-out test (split temporale 70/30):
