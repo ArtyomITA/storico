@@ -305,6 +305,21 @@ Each stage reads the artefacts produced by prior steps and fails fast if prerequ
   ```
 - Downstream services can reuse these sentences directly (they are the same ones embedded in the pattern card HTML) or inspect the helper functions in `nlg_patterns.py` for finer-grained evidence assembly.
 
+#### 4.8.2 PROMPT E13 — Explainability snippets nel report
+- Ogni report HTML ora include una sezione **"Explainability snippets"** che mostra per i 3 eventi più recenti del cliente:
+  - Tabella comparativa a 4 colonne: **Fatture reali** vs **Top-k Policy dominante** vs **Top-k Modello A** (CatBoost) vs **Top-k Modello B** (AutoGluon).
+  - Evidenziazione visiva con colori: celle verdi per i match (fattura suggerita coincide con quella reale), celle rosse per i mismatch.
+  - Per le prime 2 fatture suggerite dal modello A, elenco delle **top-3 feature SHAP** con:
+    - Nome della feature e valore corrente dell'invoice candidato.
+    - Soglia estratta dal nome della feature (se disponibile).
+    - Valore SHAP (contributo marginale alla probabilità di match).
+- Le funzioni helper introdotte:
+  - `build_explainability_cards(...)` orchestra la generazione delle card per ogni evento.
+  - `build_highlighted_comparison_html(...)` crea la tabella HTML con evidenziazione match/mismatch.
+  - `_format_shap_details(...)` produce l'elenco puntato delle feature SHAP con valore/soglia/contributo.
+- **Allineamento con Streamlit**: la stessa logica di highlight verde/rosso è già presente nell'app interattiva; questa sezione garantisce coerenza tra report stampabili e GUI live.
+- Output: i riquadri compaiono nel report HTML subito dopo la sezione "Pattern sintetico" e prima del "Confronto Regole vs Modelli".
+
 ### 4.9 Interactive application (`app/streamlit_app.py`)
 - Three pages: Pattern Card (default), Data Explorer, Clusters.
 - **Data Explorer** offre filtri multipli (cliente, intervallo date, tipo documento, chiave contabile), ricerca full-text, tabella interattiva con tutte le colonne e download CSV immediato della vista filtrata.
