@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Dict, Optional, Sequence, Tuple
+from typing import Any, Dict, Optional, Sequence, Tuple
 
 import numpy as np
 import pandas as pd
@@ -54,29 +54,45 @@ CARDINALITY_METRICS: tuple[str, ...] = (
 METRIC_LABELS: dict[str, str] = {
     "fifo_score": "FIFO",
     "lifo_score": "LIFO",
-    "same_period_score": "Same-Period",
-    "largest_score": "Largest",
-    "smallest_score": "Smallest",
-    "eomfirst_score": "EOMFirst",
-    "regmonth_score": "RegMonth",
-    "quarter_score": "Quarter",
-    "seqblock_score": "SeqBlock",
-    "typeprio_score": "TypePriority",
+    "same_period_score": "Stesso periodo",
+    "largest_score": "Importo maggiore",
+    "smallest_score": "Importo minore",
+    "eomfirst_score": "Fine mese",
+    "regmonth_score": "Mese registrazione",
+    "quarter_score": "Trimestre",
+    "seqblock_score": "Sequenza documenti",
+    "typeprio_score": "Priorità tipo",
     "periodicity_weekly": "Settimanale",
-    "periodicity_biweekly": "Bi-settimanale",
+    "periodicity_biweekly": "Bisettimanale",
     "periodicity_monthly": "Mensile",
-    "dow_concentration": "DOW concentration",
-    "dom_concentration": "DOM concentration",
+    "dow_concentration": "Concentrazione DOW",
+    "dom_concentration": "Concentrazione DOM",
     "P_k1": "k=1",
     "P_k2": "k=2",
-    "P_kge3": "k>=3",
+    "P_kge3": "k≥3",
     "k_mode": "k_mode",
     "k_entropy": "k_entropy",
 }
 
 
+def _ensure_list(value: Any) -> list[Any]:
+    """Normalize scalars, arrays, or None into a list for safe iteration."""
+    if value is None:
+        return []
+    if isinstance(value, (list, tuple)):
+        return list(value)
+    if isinstance(value, (pd.Series, np.ndarray)):
+        return [item for item in value.tolist()]
+    try:
+        if pd.isna(value):  # type: ignore[arg-type]
+            return []
+    except Exception:
+        pass
+    return [value]
+
+
 def _format_cluster_label(cluster_label: int) -> str:
-    return "Noise (-1)" if cluster_label == -1 else f"Cluster {cluster_label}"
+    return "Rumore (-1)" if cluster_label == -1 else f"Cluster {cluster_label}"
 
 
 def _render_badge(label: str, value: str, *, color: str = "#1f77b4") -> str:
@@ -219,8 +235,8 @@ def _compute_umap_projection(embeddings_df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _build_neighbors_table(neighbors_row: pd.Series, subject: str) -> pd.DataFrame:
-    neighbors = neighbors_row.get("neighbors", []) or []
-    distances = neighbors_row.get("distances", []) or []
+    neighbors = _ensure_list(neighbors_row.get("neighbors", []))
+    distances = _ensure_list(neighbors_row.get("distances", []))
     rows: list[dict[str, float | str]] = []
     for neighbor, distance in zip(neighbors, distances):
         if neighbor is None or (isinstance(neighbor, float) and np.isnan(neighbor)):
@@ -228,11 +244,13 @@ def _build_neighbors_table(neighbors_row: pd.Series, subject: str) -> pd.DataFra
         neighbor_id = str(neighbor)
         if neighbor_id == subject:
             continue
-        dist_value = (
-            np.nan
-            if distance is None or (isinstance(distance, float) and np.isnan(distance))
-            else float(distance)
-        )
+        if distance is None:
+            dist_value = np.nan
+        else:
+            try:
+                dist_value = float(distance)
+            except (TypeError, ValueError):
+                dist_value = np.nan
         rows.append({"Cliente": neighbor_id, "Distanza": dist_value})
         if len(rows) >= 10:
             break
@@ -251,7 +269,7 @@ def render_clusters_page(
     selected_client: str,
     clients: Sequence[str],
 ) -> None:
-    st.title("🔬 Cluster Explorer — Enhanced UX (S11)")
+    st.title("🔬 Cluster Explorer — UX avanzata")
 
     embeddings = tables.get("client_embedding_2d", pd.DataFrame())
     clusters = tables.get("client_clusters", pd.DataFrame())
@@ -266,40 +284,40 @@ def render_clusters_page(
         return
     
     # ========================================================================
-    # S11: HDBSCAN Parameter Panel
+    # Parametri HDBSCAN
     # ========================================================================
-    with st.sidebar.expander("🔧 HDBSCAN Parameters", expanded=False):
-        st.markdown("**Recalculate clustering with custom parameters**")
+    with st.sidebar.expander("🔧 Parametri HDBSCAN", expanded=False):
+        st.markdown("**Ricalcola il clustering con parametri personalizzati**")
         
         min_cluster_size = st.slider(
-            "min_cluster_size",
+            "Dimensione minima cluster (min_cluster_size)",
             min_value=5,
             max_value=100,
             value=30,
             step=5,
-            help="Minimum number of clients to form a cluster"
+            help="Numero minimo di clienti per formare un cluster"
         )
         
         min_samples = st.slider(
-            "min_samples",
+            "Campioni minimi (min_samples)",
             min_value=1,
             max_value=50,
             value=15,
             step=1,
-            help="Minimum samples in neighborhood for core point"
+            help="Numero minimo di vicini per considerare un punto core"
         )
         
         # Preview cluster counts
         if HDBSCAN_AVAILABLE and not embeddings_full.empty:
-            if st.button("🔄 Preview Clustering", key="preview_hdbscan"):
-                with st.spinner("Computing preview..."):
+            if st.button("🔄 Anteprima clustering", key="preview_hdbscan"):
+                with st.spinner("Calcolo dell'anteprima in corso..."):
                     try:
                         labels, n_clusters, n_noise = _recompute_hdbscan(
                             embeddings_full,
                             min_cluster_size,
                             min_samples
                         )
-                        st.success(f"✅ Preview: {n_clusters} clusters, {n_noise} noise points")
+                        st.success(f"✅ Anteprima: {n_clusters} cluster, {n_noise} punti rumorosi")
                         
                         # Store in session state for Apply button
                         st.session_state["hdbscan_preview_labels"] = labels
@@ -308,12 +326,12 @@ def render_clusters_page(
                             "min_samples": min_samples
                         }
                     except Exception as e:
-                        st.error(f"Preview failed: {e}")
+                        st.error(f"Anteprima non riuscita: {e}")
             
             # Apply button to persist changes
             if "hdbscan_preview_labels" in st.session_state:
-                if st.button("✅ Apply & Save", key="apply_hdbscan"):
-                    with st.spinner("Applying changes and saving..."):
+                if st.button("✅ Applica e salva", key="apply_hdbscan"):
+                    with st.spinner("Applicazione modifiche e salvataggio..."):
                         try:
                             labels = st.session_state["hdbscan_preview_labels"]
                             params = st.session_state["hdbscan_preview_params"]
@@ -330,47 +348,47 @@ def render_clusters_page(
                             curated_dir.mkdir(parents=True, exist_ok=True)
                             clusters_updated.to_parquet(curated_dir / "client_clusters.parquet")
                             
-                            st.success(f"✅ Saved! Clusters updated with params: {params}")
-                            st.info("Refresh the page to see updated clusters.")
+                            st.success(f"✅ Salvato! Cluster aggiornati con parametri: {params}")
+                            st.info("Aggiorna la pagina per vedere i cluster aggiornati.")
                         except Exception as e:
-                            st.error(f"Save failed: {e}")
+                            st.error(f"Salvataggio non riuscito: {e}")
         elif not HDBSCAN_AVAILABLE:
-            st.warning("HDBSCAN not available. Install with: pip install hdbscan")
+            st.warning("HDBSCAN non disponibile. Installa con: pip install hdbscan")
         elif embeddings_full.empty:
-            st.info("Full embeddings (client_embeddings.parquet) required for recalculation.")
+            st.info("Sono necessari gli embedding completi (client_embeddings.parquet) per ricalcolare.")
     
     # ========================================================================
-    # S11: UMAP/PCA Toggle
+    # Selettore proiezione
     # ========================================================================
-    with st.sidebar.expander("📊 Projection Method", expanded=False):
+    with st.sidebar.expander("📊 Metodo di proiezione", expanded=False):
         projection_method = st.radio(
-            "2D Projection",
-            options=["PCA (default)", "UMAP"],
+            "Proiezione 2D",
+            options=["PCA (predefinito)", "UMAP"],
             index=0,
             key="projection_method_toggle",
-            help="Toggle between PCA and UMAP for 2D visualization"
+            help="Alterna tra PCA e UMAP per la visualizzazione 2D"
         )
         
         if projection_method == "UMAP" and UMAP_AVAILABLE and not embeddings_full.empty:
-            if st.button("🔄 Compute UMAP", key="compute_umap"):
-                with st.spinner("Computing UMAP projection..."):
+            if st.button("🔄 Calcola UMAP", key="compute_umap"):
+                with st.spinner("Calcolo della proiezione UMAP in corso..."):
                     try:
                         umap_df = _compute_umap_projection(embeddings_full)
                         st.session_state["umap_projection"] = umap_df
-                        st.success("✅ UMAP projection computed!")
+                        st.success("✅ Proiezione UMAP generata!")
                     except Exception as e:
-                        st.error(f"UMAP computation failed: {e}")
+                        st.error(f"Calcolo UMAP non riuscito: {e}")
         elif projection_method == "UMAP" and not UMAP_AVAILABLE:
-            st.warning("UMAP not available. Install with: pip install umap-learn")
+            st.warning("UMAP non disponibile. Installa con: pip install umap-learn")
         elif projection_method == "UMAP" and embeddings_full.empty:
-            st.info("Full embeddings required for UMAP computation.")
+            st.info("Sono necessari gli embedding completi per calcolare UMAP.")
     
     # Use UMAP projection if available and selected
     if projection_method == "UMAP" and "umap_projection" in st.session_state:
         embeddings = st.session_state["umap_projection"]
-        st.caption("📊 Using UMAP projection")
+        st.caption("📊 Visualizzazione con proiezione UMAP")
     else:
-        st.caption("📊 Using PCA projection (default)")
+        st.caption("📊 Visualizzazione con proiezione PCA (predefinita)")
 
     plot_df = embeddings.copy()
     if not clusters.empty:
@@ -420,7 +438,7 @@ def render_clusters_page(
     if filtered_plot.empty:
         st.info("Nessun punto da visualizzare per il filtro corrente.")
     else:
-        # S11: Enrich tooltips with policy scores and match_rate if available
+    # Arricchisci i tooltip con i punteggi policy e match_rate se disponibili
         client_profiles = tables.get("client_profiles", pd.DataFrame())
         if not client_profiles.empty:
             # Merge policy scores for rich tooltips
@@ -442,27 +460,30 @@ def render_clusters_page(
             "cluster_display": True,
             "membership_prob": ":.2f",
         }
-        
+
         # Add policy scores to hover if available
         for col in ["fifo_score", "largest_score", "same_period_score", "match_rate"]:
             if col in filtered_plot.columns:
                 hover_data_dict[col] = ":.2f"
-        
+
+        label_dict = {
+            "x": "Dimensione 1",
+            "y": "Dimensione 2",
+            "cluster_display": "Cluster",
+            "membership_prob": "Probabilità appartenenza",
+            "match_rate": "Match rate",
+        }
+        for metric in ["fifo_score", "largest_score", "same_period_score"]:
+            if metric in filtered_plot.columns:
+                label_dict[metric] = METRIC_LABELS.get(metric, metric)
+
         fig = px.scatter(
             filtered_plot,
             x="x",
             y="y",
             color="cluster_display",
             hover_data=hover_data_dict,
-            labels={
-                "x": "Dimensione 1",
-                "y": "Dimensione 2",
-                "cluster_display": "Cluster",
-                "fifo_score": "FIFO",
-                "largest_score": "Largest",
-                "same_period_score": "Same-Period",
-                "match_rate": "Match Rate"
-            },
+            labels=label_dict,
         )
         fig.update_traces(marker=dict(size=8, opacity=0.85))
         selected_point = plot_df[plot_df["cliente"] == selected_client]
@@ -482,7 +503,7 @@ def render_clusters_page(
                     hoverinfo="skip",
                 )
             )
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
 
     st.subheader("Clienti nel cluster")
     if clusters.empty:
@@ -505,7 +526,7 @@ def render_clusters_page(
                 )[["cliente", "cluster_label", "membership_prob"]]
                 .sort_values("membership_prob", ascending=False)
             )
-            st.dataframe(display_df, use_container_width=True)
+            st.dataframe(display_df, width="stretch")
             cluster_client_choice = st.selectbox(
                 "Seleziona un cliente nel cluster",
                 display_df["cliente"].tolist(),
@@ -537,7 +558,7 @@ def render_clusters_page(
             if neighbors_table.empty:
                 st.info("Nessun vicino disponibile per il cliente selezionato.")
             else:
-                st.dataframe(neighbors_table, use_container_width=True)
+                st.dataframe(neighbors_table, width="stretch")
 
     st.subheader("Profilo cluster")
     if summaries.empty:
@@ -560,11 +581,11 @@ def render_clusters_page(
                 "Clienti", f"{int(summary_row.get('size', 0))}"
             )
             info_cols[2].metric(
-                "Dominant pattern",
+                "Pattern dominante",
                 f"{summary_row.get('dominant_pattern', 'n.d.')}",
             )
 
-            # S11: Generate automatic label if not present
+            # Genera automaticamente l'etichetta se assente
             cluster_label_text = str(
                 summary_row.get("cluster_label", summary_row.get("label_text", "n.d."))
             )
@@ -591,11 +612,11 @@ def render_clusters_page(
                     periodicity_dict
                 )
                 
-                # Use auto-generated label
+                # Usa etichetta generata automaticamente
                 cluster_label_text = auto_label
                 cluster_conf = auto_conf
                 
-                st.info("🤖 Auto-generated label from cluster profile")
+                st.info("🤖 Etichetta generata automaticamente dal profilo del cluster")
             
             badges = "".join(
                 [
@@ -614,7 +635,7 @@ def render_clusters_page(
             policy_df = _summarise_metrics(summary_row, POLICY_METRICS)
             if not policy_df.empty:
                 policy_col.write("**Policy**")
-                policy_col.dataframe(policy_df, use_container_width=True)
+                policy_col.dataframe(policy_df, width="stretch")
 
             periodicity_df = _summarise_metrics(
                 summary_row, PERIODICITY_METRICS
@@ -622,7 +643,7 @@ def render_clusters_page(
             if not periodicity_df.empty:
                 periodicity_col.write("**Periodicità**")
                 periodicity_col.dataframe(
-                    periodicity_df, use_container_width=True
+                    periodicity_df, width="stretch"
                 )
 
             cardinality_df = _summarise_metrics(
@@ -631,7 +652,7 @@ def render_clusters_page(
             if not cardinality_df.empty:
                 cardinality_col.write("**Cardinalità**")
                 cardinality_col.dataframe(
-                    cardinality_df, use_container_width=True
+                    cardinality_df, width="stretch"
                 )
 
             macro_cols = [
@@ -659,4 +680,4 @@ def render_clusters_page(
                         }
                     )
                 st.write("**Distribuzione macro-tipologie**")
-                st.dataframe(pd.DataFrame(macro_records), use_container_width=True)
+                st.dataframe(pd.DataFrame(macro_records), width="stretch")

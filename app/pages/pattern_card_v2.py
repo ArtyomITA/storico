@@ -14,7 +14,20 @@ from scipy.stats import entropy
 
 from src.analytics.pattern_detectors import POLICY_NAMES
 from src.report.nlg_patterns import render_pattern_summary
-from app.utils.export import export_dataframe_to_csv, generate_deeplink, copy_to_clipboard_button, generate_event_explain_json
+from app.utils.export import (
+    export_dataframe_to_csv,
+    generate_deeplink,
+    generate_event_explain_json,
+)
+
+
+POLICY_LABELS_IT: dict[str, str] = {
+    "same_period": "Stesso periodo",
+    "eomfirst": "Fine mese",
+    "largest": "Importo maggiore",
+    "fifo": "FIFO",
+    "lifo": "LIFO",
+}
 
 
 def plot_calendar_heatmap_12mo(events: pd.DataFrame) -> go.Figure:
@@ -314,14 +327,14 @@ def plot_policy_bars_enhanced(score_row: pd.Series) -> go.Figure:
         x=df["policy"],
         y=df["recall"],
         marker=dict(color="#59A14F", line=dict(color="#2F5827", width=1)),
-        hovertemplate="<b>%{x}</b><br>Recall: %{y:.2%}<br>Confidence: " + f"{confidence:.2f}<extra></extra>",
+        hovertemplate="<b>%{x}</b><br>Recall: %{y:.2%}<br>Confidenza: " + f"{confidence:.2f}<extra></extra>",
         name="Recall",
         text=df["recall"].apply(lambda x: f"{x:.1%}"),
         textposition="outside",
     ))
     
     fig.update_layout(
-        title=f"Recall medio per policy (confidence: {confidence:.2f})",
+        title=f"Recall medio per policy (confidenza: {confidence:.2f})",
         xaxis=dict(title="Policy"),
         yaxis=dict(title="Recall", range=[0, min(1.0, df["recall"].max() * 1.15)], tickformat=".0%"),
         margin=dict(l=60, r=40, t=80, b=60),
@@ -345,7 +358,7 @@ def render_claim_evidence_box(
         score_row: Pattern scores for client
         pattern_row: Optional pattern table row with metadata
     """
-    st.markdown("### 💡 Claim + Evidence")
+    st.markdown("### 💡 Tesi + evidenze")
     
     if score_row.empty:
         st.info("Nessuna metrica disponibile per generare claim.")
@@ -371,6 +384,7 @@ def render_claim_evidence_box(
         padding: 15px;
         border-radius: 5px;
         margin: 10px 0;
+        color: #0B2545;
     }
     .claim-evidence-box ul {
         margin: 5px 0;
@@ -379,6 +393,7 @@ def render_claim_evidence_box(
     .claim-evidence-box li {
         margin: 8px 0;
         line-height: 1.6;
+        color: #102A43;
     }
     </style>
     """, unsafe_allow_html=True)
@@ -416,7 +431,7 @@ def render_pattern_card_v2(
         auto_feature_cols: Optional AutoGluon feature columns
         developer_metrics: Optional metrics tracking dict
     """
-    st.title(f"📊 Pattern Card — Cliente {selected_client}")
+    st.title(f"📊 Scheda pattern — Cliente {selected_client}")
     
     # Filter data for selected client
     client_events = events[events["cliente"] == selected_client].copy()
@@ -442,40 +457,40 @@ def render_pattern_card_v2(
     
     # LEFT COLUMN: VISUALS
     with col_visual:
-        st.markdown("### 📅 Visual Analytics")
+    st.markdown("### 📅 Analisi visive")
         
         # Calendar heatmap (last 12 months)
         st.plotly_chart(
             plot_calendar_heatmap_12mo(client_events),
-            use_container_width=True,
-            key="calendar_heatmap"
+            width="stretch",
+            key="calendar_heatmap",
         )
         
         # Cadence histogram
         gaps = client_events["inter_event_gap_days"].dropna().to_numpy(dtype=float)
         st.plotly_chart(
             plot_cadence_histogram_enhanced(gaps),
-            use_container_width=True,
-            key="cadence_histogram"
+            width="stretch",
+            key="cadence_histogram",
         )
         
         # ACF
         st.plotly_chart(
             plot_acf_enhanced(gaps, max_lag=10),
-            use_container_width=True,
-            key="acf_plot"
+            width="stretch",
+            key="acf_plot",
         )
     
     # RIGHT COLUMN: METRICS
     with col_metrics:
-        st.markdown("### 📊 Metrics Dashboard")
+    st.markdown("### 📊 Cruscotto metriche")
         
         # Cardinality with metrics
         k_mode = float(score_row.get("k_mode", 0.0))
         k_entropy = float(score_row.get("k_entropy", 0.0))
         
         card_fig, card_metrics = plot_cardinality_with_metrics(client_events, k_mode, k_entropy)
-        st.plotly_chart(card_fig, use_container_width=True, key="cardinality_hist")
+    st.plotly_chart(card_fig, width="stretch", key="cardinality_hist")
         
         # Metrics cards
         metric_cols = st.columns(2)
@@ -487,8 +502,8 @@ def render_pattern_card_v2(
         # Policy bars with recall + confidence
         st.plotly_chart(
             plot_policy_bars_enhanced(score_row),
-            use_container_width=True,
-            key="policy_bars"
+            width="stretch",
+            key="policy_bars",
         )
         
         # Pattern label card
@@ -499,9 +514,9 @@ def render_pattern_card_v2(
             stability = float(pattern_row.get("stability_index", 0.0))
             
             label_cols = st.columns(3)
-            label_cols[0].metric("Label", pattern_label)
-            label_cols[1].metric("Confidence", f"{confidence:.2f}")
-            label_cols[2].metric("Stability", f"{stability:.2f}")
+            label_cols[0].metric("Etichetta", pattern_label)
+            label_cols[1].metric("Confidenza", f"{confidence:.2f}")
+            label_cols[2].metric("Stabilità", f"{stability:.2f}")
     
     # === CLAIM + EVIDENCE SECTION (full width) ===
     st.markdown("---")
@@ -509,11 +524,11 @@ def render_pattern_card_v2(
     
     # === ADDITIONAL METRICS (full width) ===
     st.markdown("---")
-    st.markdown("### 📏 Additional Metrics")
+    st.markdown("### 📏 Metriche aggiuntive")
     
     extra_cols = st.columns(4)
-    extra_cols[0].metric("DOW concentration", f"{float(score_row.get('dow_concentration', 0.0)):.2f}")
-    extra_cols[1].metric("DOM concentration", f"{float(score_row.get('dom_concentration', 0.0)):.2f}")
+    extra_cols[0].metric("Concentrazione DOW", f"{float(score_row.get('dow_concentration', 0.0)):.2f}")
+    extra_cols[1].metric("Concentrazione DOM", f"{float(score_row.get('dom_concentration', 0.0)):.2f}")
     extra_cols[2].metric("# Eventi", f"{len(client_events)}")
     extra_cols[3].metric("Gap medio", f"{gaps.mean():.1f} giorni" if gaps.size > 0 else "n.d.")
     
@@ -530,9 +545,9 @@ def render_pattern_card_v2(
             developer_metrics=developer_metrics,
         )
     
-    # === S12: EXPORT & DEEP-LINK ===
+    # === Export & deep-link ===
     st.markdown("---")
-    st.markdown("### 📤 Export & Audit (PROMPT S12)")
+    st.markdown("### 📤 Esporta & audit")
     
     export_cols = st.columns(2)
     
@@ -541,7 +556,7 @@ def render_pattern_card_v2(
         if not pattern_table_df.empty:
             csv_bytes = export_dataframe_to_csv(pattern_table_df)
             st.download_button(
-                label="📥 Download Pattern Table CSV",
+                label="📥 Scarica tabella pattern (CSV)",
                 data=csv_bytes,
                 file_name=f"pattern_table_{selected_client}.csv",
                 mime="text/csv",
@@ -553,11 +568,11 @@ def render_pattern_card_v2(
             page="Pattern Card",
             filters={"cliente": selected_client},
         )
-        if st.button("📋 Copy Deep-Link"):
+        if st.button("📋 Copia deep-link"):
             st.code(deeplink_url, language=None)
-            st.caption("⚠️ Copy the URL above manually (Streamlit limitation).")
+            st.caption("⚠️ Copia manualmente l'URL sopra (limitazione di Streamlit).")
     
-    st.caption("Export & Audit — PROMPT S12 | CSV exports respect current filters; deep-link preserves cliente selection")
+    st.caption("Esporta & audit | I CSV rispettano i filtri correnti e il deep-link conserva il cliente selezionato")
 
 
 def apply_policy_boost(
@@ -721,12 +736,12 @@ def render_explainability_panel(
     display_df.columns = ["Numero Documento", "Probabilità modello (p_i)", "Label reale"]
     display_df["Probabilità modello (p_i)"] = display_df["Probabilità modello (p_i)"].apply(lambda x: f"{x:.4f}")
     
-    st.dataframe(display_df, use_container_width=True, hide_index=True)
+    st.dataframe(display_df, width="stretch", hide_index=True)
     
-    # === S12: JSON EXPLAIN DOWNLOAD FOR FIRST EVENT ===
+    # === JSON explain per evento top ===
     if not top_k.empty:
-        st.markdown("#### 📥 JSON Explain Download (PROMPT S12)")
-        st.caption("Download structured JSON explain for first ranked event with model ranking, policy scores, cluster label, SHAP top-3")
+    st.markdown("#### 📥 Scarica JSON Explain")
+    st.caption("Scarica il JSON strutturato dell'evento in prima posizione con ranking del modello, punteggi policy, cluster e top-3 SHAP")
         
         first_event_row = top_k.iloc[0]
         
@@ -776,7 +791,7 @@ def render_explainability_panel(
         
         json_bytes = json.dumps(explain_json, indent=2).encode("utf-8")
         st.download_button(
-            label="📥 Download JSON Explain (first event)",
+            label="📥 Scarica JSON Explain (evento top)",
             data=json_bytes,
             file_name=f"explain_event_{first_event_row['numero_documento']}.json",
             mime="application/json",
@@ -784,7 +799,7 @@ def render_explainability_panel(
     
     # === SHAP TOP-3 FOR FIRST 2 INVOICES ===
     if model_type == "catboost" and shap_values is not None:
-        st.markdown("#### 🔬 SHAP Explanations (prime 2 fatture)")
+    st.markdown("#### 🔬 Spiegazioni SHAP (prime 2 fatture)")
         
         for idx, (_, row) in enumerate(top_k.head(2).iterrows()):
             doc_id = row["numero_documento"]
@@ -810,24 +825,24 @@ def render_explainability_panel(
                     }
                     for feat, shap_val in ranked_feats
                 ])
-                st.dataframe(shap_df, use_container_width=True, hide_index=True)
+                st.dataframe(shap_df, width="stretch", hide_index=True)
     
     # === WHAT-IF POLICY GATING ===
     st.markdown("---")
-    st.markdown("#### 🎛️ What-If Policy Gating")
-    st.caption("Simula l'effetto di boost su policy specifiche: `p_i' = p_i × (1 + α)`")
+    st.markdown("#### 🎛️ Simula policy gating")
+    st.caption("Simula l'effetto di un boost su policy specifiche: `p_i' = p_i × (1 + α)`")
     
     # Policy boost controls
-    st.markdown("**Seleziona policy da boostare:**")
+    st.markdown("**Seleziona le policy da potenziare:**")
     
     boost_cols = st.columns(3)
     
     with boost_cols[0]:
-        same_period_boost = st.checkbox("Same Period", value=False, key="boost_same_period")
-        eomfirst_boost = st.checkbox("EOM First", value=False, key="boost_eomfirst")
+        same_period_boost = st.checkbox("Stesso periodo", value=False, key="boost_same_period")
+        eomfirst_boost = st.checkbox("Fine mese", value=False, key="boost_eomfirst")
     
     with boost_cols[1]:
-        largest_boost = st.checkbox("Largest", value=False, key="boost_largest")
+        largest_boost = st.checkbox("Importo maggiore", value=False, key="boost_largest")
         fifo_boost = st.checkbox("FIFO", value=False, key="boost_fifo")
     
     with boost_cols[2]:
@@ -858,7 +873,8 @@ def render_explainability_panel(
         active_boosts.append("lifo")
     
     if active_boosts:
-        st.markdown(f"**Policy attive:** {', '.join([p.upper() for p in active_boosts])} con α={alpha:.2f}")
+    active_labels = ", ".join([POLICY_LABELS_IT.get(p, p.upper()) for p in active_boosts])
+    st.markdown(f"**Policy attive:** {active_labels} con α={alpha:.2f}")
         
         # Apply composite boost (cumulative)
         boosted_df = event_features.copy()
@@ -914,7 +930,7 @@ def render_explainability_panel(
             subset=["Δ Rank"]
         )
         
-        st.dataframe(styled_df, use_container_width=True, hide_index=True)
+    st.dataframe(styled_df, width="stretch", hide_index=True)
         
         # Summary stats
         moved_up = (boosted_df["rank_delta"] > 0).sum()

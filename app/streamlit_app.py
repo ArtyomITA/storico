@@ -6,6 +6,7 @@ import importlib
 import json
 import logging
 import pickle
+import sys
 import time
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
@@ -14,6 +15,11 @@ import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
+
+CURRENT_DIR = Path(__file__).resolve().parent
+PROJECT_ROOT = CURRENT_DIR.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 from app.pages.clusters import render_clusters_page
 from app.pages.kpi_dashboard import render_kpi_dashboard_page
@@ -176,7 +182,7 @@ def _load_json_log_tail(log_path: Path, max_lines: int = 100) -> List[Dict[str, 
 def _render_developer_panel(metrics: Dict[str, Any]) -> None:
     """
     Enhanced Developer Mode overlay with JSON log viewer, timing table, memory tracker, and warning/error parser.
-    PROMPT S10 implementation.
+    Developer mode implementation.
     """
     st.markdown("---")
     st.header("🛠️ Developer Mode — Observability Panel")
@@ -222,7 +228,7 @@ def _render_developer_panel(metrics: Dict[str, Any]) -> None:
             
             st.dataframe(
                 timing_df[display_cols] if all(c in timing_df.columns for c in display_cols) else timing_df,
-                use_container_width=True,
+                width="stretch",
                 hide_index=True,
                 column_config={
                     "progress": st.column_config.ProgressColumn(
@@ -267,7 +273,7 @@ def _render_developer_panel(metrics: Dict[str, Any]) -> None:
             
             st.dataframe(
                 memory_df,
-                use_container_width=True,
+                width="stretch",
                 hide_index=True,
                 column_config={
                     "memory_mb": st.column_config.NumberColumn(
@@ -1609,7 +1615,7 @@ def render_pattern_card(
             with st.spinner("Esecuzione validazione hold-out..."):
                 accuracy = run_holdout_validation(selected_client)
             if accuracy is None:
-                st.info("Funzione di validazione non ancora disponibile. Completare il Prompt 7 per abilitarla.")
+                st.info("Funzione di validazione non ancora disponibile. Completa l'attività 7 per abilitarla.")
             else:
                 st.success(f"Accuracy hold-out: {accuracy:.2%}")
 

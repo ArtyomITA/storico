@@ -124,7 +124,7 @@ def _render_ranking_tab(kpi_df: pd.DataFrame, filtered_df: pd.DataFrame) -> None
                     "mrr": "MRR",
                 }
             ),
-            use_container_width=True,
+            width="stretch",
             hide_index=True,
         )
 
@@ -177,7 +177,7 @@ def _render_ranking_tab(kpi_df: pd.DataFrame, filtered_df: pd.DataFrame) -> None
                     "mrr": "MRR",
                 }
             ),
-            use_container_width=True,
+            width="stretch",
             hide_index=True,
         )
 
@@ -289,7 +289,7 @@ def _render_calibration_tab(
             height=500,
         )
 
-        st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
     else:
         st.info("No calibration data available for selected filters.")
 
@@ -353,7 +353,7 @@ def render_kpi_dashboard_page(tables: Dict[str, pd.DataFrame], developer_metrics
     # Cardinality bucket filter
     cardinality_options = ["all", "k=1", "k=2-3", "k>=4"]
     cardinality_bucket = st.sidebar.selectbox(
-        "Cardinality Bucket",
+        "Bucket di cardinalità",
         cardinality_options,
         index=0,
         key="cardinality_filter_kpi",
@@ -384,8 +384,8 @@ def render_kpi_dashboard_page(tables: Dict[str, pd.DataFrame], developer_metrics
         st.markdown("---")
         _download_csv(filtered_kpi, "kpi_ranking_filtered.csv")
         
-        # S12: Deep-link
-        st.markdown("#### 📋 Deep-Link (PROMPT S12)")
+        # Deep-link
+        st.markdown("#### 📋 Deep-Link")
         deeplink_url = generate_deeplink(
             page="KPI Dashboard",
             filters={
@@ -393,9 +393,9 @@ def render_kpi_dashboard_page(tables: Dict[str, pd.DataFrame], developer_metrics
                 "cardinality_bucket": cardinality_bucket if cardinality_bucket else "all",
             },
         )
-        if st.button("📋 Copy Deep-Link (Ranking)", key="deeplink_ranking"):
+        if st.button("📋 Copia deep-link (ranking)", key="deeplink_ranking"):
             st.code(deeplink_url, language=None)
-            st.caption("⚠️ Copy the URL above manually (Streamlit limitation).")
+            st.caption("⚠️ Copia manualmente l'URL sopra (limitazione di Streamlit).")
 
     with tab2:
         if not calibration_summary.empty:
@@ -403,8 +403,8 @@ def render_kpi_dashboard_page(tables: Dict[str, pd.DataFrame], developer_metrics
             st.markdown("---")
             _download_csv(filtered_calibration_summary, "calibration_summary_filtered.csv")
             
-            # S12: Deep-link
-            st.markdown("#### 📋 Deep-Link (PROMPT S12)")
+            # Deep-link
+            st.markdown("#### 📋 Deep-Link")
             deeplink_url_cal = generate_deeplink(
                 page="KPI Dashboard",
                 filters={
@@ -413,8 +413,8 @@ def render_kpi_dashboard_page(tables: Dict[str, pd.DataFrame], developer_metrics
                     "tab": "calibration",
                 },
             )
-            if st.button("📋 Copy Deep-Link (Calibration)", key="deeplink_calibration"):
+            if st.button("📋 Copia deep-link (calibrazione)", key="deeplink_calibration"):
                 st.code(deeplink_url_cal, language=None)
-                st.caption("⚠️ Copy the URL above manually (Streamlit limitation).")
+                st.caption("⚠️ Copia manualmente l'URL sopra (limitazione di Streamlit).")
         else:
-            st.info("No calibration data available. Run calibration diagnostics first.")
+            st.info("Nessun dato di calibrazione disponibile. Esegui prima la diagnostica di calibrazione.")

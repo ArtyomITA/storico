@@ -6,3 +6,4 @@ streamlit>=1.35
 plotly>=5.20
 catboost>=1.2
 autogluon.tabular>=1.1.0
+rich>=13.0

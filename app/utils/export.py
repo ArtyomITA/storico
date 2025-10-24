@@ -1,7 +1,4 @@
-"""Export and audit utilities for Streamlit pages.
-
-PROMPT S12: JSON explain download, CSV exports, deep-link copy.
-"""
+"""Export and audit utilities for Streamlit pages."""
 from __future__ import annotations
 
 import json
@@ -11,6 +8,14 @@ from urllib.parse import urlencode
 
 import pandas as pd
 import streamlit as st
+
+
+def _find_column(df: pd.DataFrame, candidates: List[str]) -> Optional[str]:
+    """Return the first matching column name present in the DataFrame."""
+    for name in candidates:
+        if name in df.columns:
+            return name
+    return None
 
 
 def generate_event_explain_json(
@@ -36,6 +41,9 @@ def generate_event_explain_json(
     """
     doc_id = event_row.get("numero_documento", "n.d.")
     cliente = event_row.get("cliente", "n.d.")
+    event_key = event_row.get("event_key")
+    doc_id_str = str(doc_id)
+    cliente_str = str(cliente)
     
     # Model ranking (p_i score)
     p_model = event_row.get("p_model", None)
@@ -48,27 +56,75 @@ def generate_event_explain_json(
     
     # Policy ranking
     ranking_policy: Dict[str, Any] = {}
-    if policy_scores is not None:
-        event_match = policy_scores[
-            (policy_scores["numero_documento"] == doc_id) & (policy_scores["cliente"] == cliente)
-        ]
-        if not event_match.empty:
-            row = event_match.iloc[0]
-            ranking_policy = {
-                "fifo_score": float(row.get("fifo_score", 0.0)),
-                "lifo_score": float(row.get("lifo_score", 0.0)),
-                "largest_score": float(row.get("largest_score", 0.0)),
-                "same_period_score": float(row.get("same_period_score", 0.0)),
-                "eomfirst_score": float(row.get("eomfirst_score", 0.0)),
-                "match_rate": float(row.get("match_rate", 0.0)),
-            }
-    
-    if predictions is not None:
-        pred_match = predictions[
-            (predictions["numero_documento"] == doc_id) & (predictions["cliente"] == cliente)
-        ]
-        if not pred_match.empty:
-            ranking_policy["predicted_policy"] = str(pred_match.iloc[0].get("predicted_policy", "n.d."))
+    if policy_scores is not None and not policy_scores.empty:
+        doc_col = _find_column(
+            policy_scores,
+            [
+                "numero_documento",
+                "documento",
+                "doc_id",
+                "document_number",
+                "invoice_id",
+            ],
+        )
+        cliente_col = _find_column(
+            policy_scores,
+            ["cliente", "client", "customer", "cliente_id", "id_cliente"],
+        )
+        event_col = _find_column(policy_scores, ["event_key", "evento", "event_id"])
+
+        mask: Optional[pd.Series] = None
+        if doc_col and cliente_col:
+            mask = (
+                policy_scores[doc_col].astype(str) == doc_id_str
+            ) & (policy_scores[cliente_col].astype(str) == cliente_str)
+        elif event_col and event_key is not None:
+            mask = policy_scores[event_col].astype(str) == str(event_key)
+
+        if mask is not None:
+            event_match = policy_scores.loc[mask]
+            if not event_match.empty:
+                row = event_match.iloc[0]
+                ranking_policy = {
+                    "fifo_score": float(row.get("fifo_score", 0.0)),
+                    "lifo_score": float(row.get("lifo_score", 0.0)),
+                    "largest_score": float(row.get("largest_score", 0.0)),
+                    "same_period_score": float(row.get("same_period_score", 0.0)),
+                    "eomfirst_score": float(row.get("eomfirst_score", 0.0)),
+                    "match_rate": float(row.get("match_rate", 0.0)),
+                }
+
+    if predictions is not None and not predictions.empty:
+        doc_col = _find_column(
+            predictions,
+            [
+                "numero_documento",
+                "documento",
+                "doc_id",
+                "document_number",
+                "invoice_id",
+            ],
+        )
+        cliente_col = _find_column(
+            predictions,
+            ["cliente", "client", "customer", "cliente_id", "id_cliente"],
+        )
+        event_col = _find_column(predictions, ["event_key", "evento", "event_id"])
+
+        mask: Optional[pd.Series] = None
+        if doc_col and cliente_col:
+            mask = (
+                predictions[doc_col].astype(str) == doc_id_str
+            ) & (predictions[cliente_col].astype(str) == cliente_str)
+        elif event_col and event_key is not None:
+            mask = predictions[event_col].astype(str) == str(event_key)
+
+        if mask is not None:
+            pred_match = predictions.loc[mask]
+            if not pred_match.empty:
+                ranking_policy["predicted_policy"] = str(
+                    pred_match.iloc[0].get("predicted_policy", pred_match.iloc[0].get("policy_pred", "n.d."))
+                )
     
     # Cluster label
     cluster_label = "n.d."
