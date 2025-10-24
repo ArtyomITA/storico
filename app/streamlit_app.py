@@ -214,6 +214,9 @@ def _render_developer_panel(metrics: Dict[str, Any]) -> None:
         if sections:
             # Create DataFrame with timing data
             timing_df = pd.DataFrame(sections).sort_values("duration_ms", ascending=False)
+
+            if "name" in timing_df.columns and "stage" not in timing_df.columns:
+                timing_df = timing_df.rename(columns={"name": "stage"})
             
             # Add bar visualization
             if "duration_ms" in timing_df.columns:
@@ -250,7 +253,7 @@ def _render_developer_panel(metrics: Dict[str, Any]) -> None:
                 avg_ms = timing_df["duration_ms"].mean()
                 st.metric("Average Section Time", f"{avg_ms:.1f} ms")
             with col3:
-                slowest = timing_df.iloc[0]["stage"] if not timing_df.empty else "N/A"
+                slowest = timing_df.iloc[0]["stage"] if (not timing_df.empty and "stage" in timing_df.columns) else "N/A"
                 st.metric("Slowest Section", slowest)
         else:
             st.info("No timing data available for this session.")
@@ -404,7 +407,7 @@ def _render_developer_panel(metrics: Dict[str, Any]) -> None:
                         error_df = pd.DataFrame(error_data)
                         st.dataframe(
                             error_df,
-                            use_container_width=True,
+                            width="stretch",
                             hide_index=True,
                             column_config={
                                 "Level": st.column_config.TextColumn(
@@ -1196,7 +1199,7 @@ def render_data_explorer_page(
     with table_tab:
         @_section_tracker(developer_metrics, "UI.DataExplorer.Table")
         def _render_table() -> None:
-            st.dataframe(filtered_df, use_container_width=True)
+            st.dataframe(filtered_df, width="stretch")
             if not filtered_df.empty:
                 csv_bytes = filtered_df.to_csv(index=False).encode("utf-8")
                 st.download_button(
@@ -1263,18 +1266,18 @@ def render_data_explorer_page(
                     if gaps.size:
                         cadence_cols[0].plotly_chart(
                             plot_histogram_with_markers(gaps, "Distribuzione gap tra eventi"),
-                            use_container_width=True,
+                            width="stretch",
                         )
                         cadence_cols[1].plotly_chart(
                             plot_acf(gaps),
-                            use_container_width=True,
+                            width="stretch",
                         )
                     else:
                         st.info("Non sono presenti gap sufficienti per il grafico.")
 
                     st.plotly_chart(
                         plot_calendar_heatmap(relevant_events),
-                        use_container_width=True,
+                        width="stretch",
                     )
 
             if show_policy:
@@ -1287,7 +1290,7 @@ def render_data_explorer_page(
                     ]
                     if score_columns:
                         mean_scores = pattern_subset[score_columns].mean()
-                        st.plotly_chart(plot_policy_bars(mean_scores), use_container_width=True)
+                        st.plotly_chart(plot_policy_bars(mean_scores), width="stretch")
                     else:
                         st.info("Nessuna colonna di score policy disponibile.")
                     metrics_cols = st.columns(3)
@@ -1309,7 +1312,7 @@ def render_data_explorer_page(
                 if relevant_events.empty:
                     st.info("Nessun evento per calcolare la cardinalità.")
                 else:
-                    st.plotly_chart(plot_cardinality_histogram(relevant_events), use_container_width=True)
+                    st.plotly_chart(plot_cardinality_histogram(relevant_events), width="stretch")
                 if not pattern_table_subset.empty:
                     card_cols = st.columns(2)
                     card_cols[0].metric(
@@ -1363,25 +1366,25 @@ def render_pattern_card(
             if gaps.size:
                 col_hist.plotly_chart(
                     plot_histogram_with_markers(gaps, "Distribuzione gap tra eventi"),
-                    use_container_width=True,
+                    width="stretch",
                 )
             else:
                 st.info("Non sono presenti gap sufficienti per il grafico.")
         with col_acf:
             if gaps.size:
-                col_acf.plotly_chart(plot_acf(gaps), use_container_width=True)
+                col_acf.plotly_chart(plot_acf(gaps), width="stretch")
             else:
                 st.info("Autocorrelazione non disponibile.")
 
         gauge_cols = st.columns(3)
         gauge_figs = plot_periodicity_gauges(score_row)
         for container, fig in zip(gauge_cols, gauge_figs):
-            container.plotly_chart(fig, use_container_width=True)
+            container.plotly_chart(fig, width="stretch")
 
         st.markdown("### Calendario")
         if not client_events.empty:
             heatmap = plot_calendar_heatmap(client_events)
-            st.plotly_chart(heatmap, use_container_width=True)
+            st.plotly_chart(heatmap, width="stretch")
         else:
             st.info("Nessun evento disponibile per il calendario.")
 
@@ -1397,7 +1400,7 @@ def render_pattern_card(
         if score_row.empty:
             st.info("Metriche policy non disponibili per il cliente selezionato.")
         else:
-            st.plotly_chart(plot_policy_bars(score_row), use_container_width=True)
+            st.plotly_chart(plot_policy_bars(score_row), width="stretch")
 
     _render_policy_section()
 
@@ -1407,7 +1410,7 @@ def render_pattern_card(
         if client_events.empty:
             st.info("Nessun evento per calcolare la cardinalità.")
         else:
-            st.plotly_chart(plot_cardinality_histogram(client_events), use_container_width=True)
+            st.plotly_chart(plot_cardinality_histogram(client_events), width="stretch")
         card_cols = st.columns(2)
         card_cols[0].metric("k_mode", f"{float(score_row.get('k_mode', 0.0)):.1f}")
         card_cols[1].metric("k_entropy", f"{float(score_row.get('k_entropy', 0.0)):.2f}")
@@ -1427,11 +1430,11 @@ def render_pattern_card(
             doc_cols = st.columns(2)
             doc_cols[0].plotly_chart(
                 plot_frequency_bar(macro_counts, "Macro-tipologia documenti", "#FF9DA7"),
-                use_container_width=True,
+                width="stretch",
             )
             doc_cols[1].plotly_chart(
                 plot_frequency_bar(tipo_counts, "Tipo documento", "#EDC948"),
-                use_container_width=True,
+                width="stretch",
             )
 
     _render_document_section()
@@ -1576,7 +1579,7 @@ def render_pattern_card(
                     policy_label,
                     model_short,
                 )
-                st.dataframe(comparison_df, use_container_width=True)
+                st.dataframe(comparison_df, width="stretch")
 
                 if selected_type == "catboost" and shap_details:
                     with st.expander("Spiegazioni SHAP (prime 2 fatture)", expanded=False):

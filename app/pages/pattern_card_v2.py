@@ -457,15 +457,15 @@ def render_pattern_card_v2(
     
     # LEFT COLUMN: VISUALS
     with col_visual:
-    st.markdown("### 📅 Analisi visive")
-        
+        st.markdown("### 📅 Analisi visive")
+
         # Calendar heatmap (last 12 months)
         st.plotly_chart(
             plot_calendar_heatmap_12mo(client_events),
             width="stretch",
             key="calendar_heatmap",
         )
-        
+
         # Cadence histogram
         gaps = client_events["inter_event_gap_days"].dropna().to_numpy(dtype=float)
         st.plotly_chart(
@@ -473,7 +473,7 @@ def render_pattern_card_v2(
             width="stretch",
             key="cadence_histogram",
         )
-        
+
         # ACF
         st.plotly_chart(
             plot_acf_enhanced(gaps, max_lag=10),
@@ -483,36 +483,36 @@ def render_pattern_card_v2(
     
     # RIGHT COLUMN: METRICS
     with col_metrics:
-    st.markdown("### 📊 Cruscotto metriche")
-        
+        st.markdown("### 📊 Cruscotto metriche")
+
         # Cardinality with metrics
         k_mode = float(score_row.get("k_mode", 0.0))
         k_entropy = float(score_row.get("k_entropy", 0.0))
-        
+
         card_fig, card_metrics = plot_cardinality_with_metrics(client_events, k_mode, k_entropy)
-    st.plotly_chart(card_fig, width="stretch", key="cardinality_hist")
-        
+        st.plotly_chart(card_fig, width="stretch", key="cardinality_hist")
+
         # Metrics cards
         metric_cols = st.columns(2)
         metric_cols[0].metric("🎯 k_mode", f"{card_metrics['k_mode']:.1f}")
         metric_cols[1].metric("📈 k_entropy", f"{card_metrics['k_entropy']:.2f}")
-        
+
         st.markdown("---")
-        
+
         # Policy bars with recall + confidence
         st.plotly_chart(
             plot_policy_bars_enhanced(score_row),
             width="stretch",
             key="policy_bars",
         )
-        
+
         # Pattern label card
         if pattern_row is not None:
             st.markdown("#### Pattern riconosciuto")
             pattern_label = str(pattern_row.get("pattern_label", "n.d."))
             confidence = float(pattern_row.get("confidence", 0.0))
             stability = float(pattern_row.get("stability_index", 0.0))
-            
+
             label_cols = st.columns(3)
             label_cols[0].metric("Etichetta", pattern_label)
             label_cols[1].metric("Confidenza", f"{confidence:.2f}")
@@ -740,9 +740,11 @@ def render_explainability_panel(
     
     # === JSON explain per evento top ===
     if not top_k.empty:
-    st.markdown("#### 📥 Scarica JSON Explain")
-    st.caption("Scarica il JSON strutturato dell'evento in prima posizione con ranking del modello, punteggi policy, cluster e top-3 SHAP")
-        
+        st.markdown("#### 📥 Scarica JSON Explain")
+        st.caption(
+            "Scarica il JSON strutturato dell'evento in prima posizione con ranking del modello, punteggi policy, cluster e top-3 SHAP"
+        )
+
         first_event_row = top_k.iloc[0]
         
         # Load policy scores and predictions for explain JSON
@@ -799,8 +801,8 @@ def render_explainability_panel(
     
     # === SHAP TOP-3 FOR FIRST 2 INVOICES ===
     if model_type == "catboost" and shap_values is not None:
-    st.markdown("#### 🔬 Spiegazioni SHAP (prime 2 fatture)")
-        
+        st.markdown("#### 🔬 Spiegazioni SHAP (prime 2 fatture)")
+
         for idx, (_, row) in enumerate(top_k.head(2).iterrows()):
             doc_id = row["numero_documento"]
             row_idx = event_features[event_features["numero_documento"] == doc_id].index[0]
@@ -873,9 +875,9 @@ def render_explainability_panel(
         active_boosts.append("lifo")
     
     if active_boosts:
-    active_labels = ", ".join([POLICY_LABELS_IT.get(p, p.upper()) for p in active_boosts])
-    st.markdown(f"**Policy attive:** {active_labels} con α={alpha:.2f}")
-        
+        active_labels = ", ".join([POLICY_LABELS_IT.get(p, p.upper()) for p in active_boosts])
+        st.markdown(f"**Policy attive:** {active_labels} con α={alpha:.2f}")
+
         # Apply composite boost (cumulative)
         boosted_df = event_features.copy()
         boosted_df["p_original"] = boosted_df["p_model"]
@@ -925,13 +927,13 @@ def render_explainability_panel(
             else:
                 return ""
         
-        styled_df = comparison_df.style.applymap(
+        styled_df = comparison_df.style.map(
             color_rank_delta,
             subset=["Δ Rank"]
         )
-        
-    st.dataframe(styled_df, width="stretch", hide_index=True)
-        
+
+        st.dataframe(styled_df, width="stretch", hide_index=True)
+
         # Summary stats
         moved_up = (boosted_df["rank_delta"] > 0).sum()
         moved_down = (boosted_df["rank_delta"] < 0).sum()

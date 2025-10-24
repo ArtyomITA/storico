@@ -288,8 +288,7 @@ def _render_calibration_tab(
             hovermode="closest",
             height=500,
         )
-
-    st.plotly_chart(fig, width="stretch")
+        st.plotly_chart(fig, width="stretch")
     else:
         st.info("No calibration data available for selected filters.")
 

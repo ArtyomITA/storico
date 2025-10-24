@@ -7,3 +7,4 @@ plotly>=5.20
 catboost>=1.2
 autogluon.tabular>=1.1.0
 rich>=13.0
+lightgbm>=3.3.5
