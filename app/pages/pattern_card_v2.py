@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import functools
+import json
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
@@ -13,6 +14,7 @@ from scipy.stats import entropy
 
 from src.analytics.pattern_detectors import POLICY_NAMES
 from src.report.nlg_patterns import render_pattern_summary
+from app.utils.export import export_dataframe_to_csv, generate_deeplink, copy_to_clipboard_button, generate_event_explain_json
 
 
 def plot_calendar_heatmap_12mo(events: pd.DataFrame) -> go.Figure:
@@ -527,6 +529,35 @@ def render_pattern_card_v2(
             auto_feature_cols=auto_feature_cols or [],
             developer_metrics=developer_metrics,
         )
+    
+    # === S12: EXPORT & DEEP-LINK ===
+    st.markdown("---")
+    st.markdown("### 📤 Export & Audit (PROMPT S12)")
+    
+    export_cols = st.columns(2)
+    
+    with export_cols[0]:
+        # CSV export for pattern table
+        if not pattern_table_df.empty:
+            csv_bytes = export_dataframe_to_csv(pattern_table_df)
+            st.download_button(
+                label="📥 Download Pattern Table CSV",
+                data=csv_bytes,
+                file_name=f"pattern_table_{selected_client}.csv",
+                mime="text/csv",
+            )
+    
+    with export_cols[1]:
+        # Deep-link copy
+        deeplink_url = generate_deeplink(
+            page="Pattern Card",
+            filters={"cliente": selected_client},
+        )
+        if st.button("📋 Copy Deep-Link"):
+            st.code(deeplink_url, language=None)
+            st.caption("⚠️ Copy the URL above manually (Streamlit limitation).")
+    
+    st.caption("Export & Audit — PROMPT S12 | CSV exports respect current filters; deep-link preserves cliente selection")
 
 
 def apply_policy_boost(
@@ -691,6 +722,65 @@ def render_explainability_panel(
     display_df["Probabilità modello (p_i)"] = display_df["Probabilità modello (p_i)"].apply(lambda x: f"{x:.4f}")
     
     st.dataframe(display_df, use_container_width=True, hide_index=True)
+    
+    # === S12: JSON EXPLAIN DOWNLOAD FOR FIRST EVENT ===
+    if not top_k.empty:
+        st.markdown("#### 📥 JSON Explain Download (PROMPT S12)")
+        st.caption("Download structured JSON explain for first ranked event with model ranking, policy scores, cluster label, SHAP top-3")
+        
+        first_event_row = top_k.iloc[0]
+        
+        # Load policy scores and predictions for explain JSON
+        policy_scores_df = None
+        predictions_df = None
+        clusters_df = None
+        try:
+            base_dir = Path(__file__).resolve().parents[2]
+            curated_dir = base_dir / "data" / "curated"
+            
+            policy_scores_path = curated_dir / "per_event_policy_scores.parquet"
+            if policy_scores_path.exists():
+                policy_scores_df = pd.read_parquet(policy_scores_path)
+            
+            predictions_path = curated_dir / "event_policy_predictions.parquet"
+            if predictions_path.exists():
+                predictions_df = pd.read_parquet(predictions_path)
+            
+            clusters_path = curated_dir / "client_clusters.parquet"
+            if clusters_path.exists():
+                clusters_df = pd.read_parquet(clusters_path)
+        except Exception:
+            pass
+        
+        # Prepare SHAP values for first event
+        shap_series = None
+        if model_type == "catboost" and shap_values is not None and cat_feature_cols is not None:
+            try:
+                doc_id = first_event_row["numero_documento"]
+                row_idx = event_features[event_features["numero_documento"] == doc_id].index[0]
+                shap_row = shap_values[row_idx, :-1]
+                shap_series = pd.Series(data=shap_row, index=list(cat_feature_cols))  # type: ignore[call-overload]
+            except Exception:
+                pass
+        
+        feat_names_list = list(cat_feature_cols) if cat_feature_cols is not None else None
+        
+        explain_json = generate_event_explain_json(
+            event_row=first_event_row,
+            policy_scores=policy_scores_df,
+            predictions=predictions_df,
+            clusters=clusters_df,
+            shap_values=shap_series,  # type: ignore[arg-type]
+            feature_names=feat_names_list,
+        )
+        
+        json_bytes = json.dumps(explain_json, indent=2).encode("utf-8")
+        st.download_button(
+            label="📥 Download JSON Explain (first event)",
+            data=json_bytes,
+            file_name=f"explain_event_{first_event_row['numero_documento']}.json",
+            mime="application/json",
+        )
     
     # === SHAP TOP-3 FOR FIRST 2 INVOICES ===
     if model_type == "catboost" and shap_values is not None:

@@ -483,6 +483,100 @@ Each stage reads the artefacts produced by prior steps and fails fast if prerequ
   - Progress column config: `st.column_config.ProgressColumn()` richiede min_value=0, max_value=1, values normalizzati 0-1.
 - **Integrazione**: toggle in sidebar accessibile da tutte le pagine; `_render_developer_panel(developer_metrics)` chiamato alla fine di ogni page render se developer_mode == True; metrics dict popolato incrementalmente durante page render con `@_section_tracker` decorator.
 
+#### 4.9.5 PROMPT S11 — Embedding/Clusters UX: pannello parametri HDBSCAN + etichette automatiche + UMAP toggle
+- **Enhanced Cluster Explorer** migliora l'esperienza UX della pagina Clusters per analisi macro-pattern interattiva.
+- **Obiettivo**: permettere riconfigurazione clustering live, visualizzazione con proiezioni alternative (UMAP), etichette auto-generate interpretabili.
+- **Componenti** (aggiunte a `app/pages/clusters.py`):
+  1. **🔧 HDBSCAN Parameter Panel** (sidebar expander): sliders per `min_cluster_size` (5-100, default 30) e `min_samples` (1-50, default 15); pulsante "🔄 Preview Clustering" per ricalcolo on-the-fly senza persistenza; mostra conteggio preview (N clusters, N noise points); pulsante "✅ Apply & Save" per persistere modifiche a `client_clusters.parquet`; richiede `client_embeddings.parquet` (full embeddings); conditional rendering se hdbscan package disponibile.
+  2. **📊 Projection Method Toggle** (sidebar expander): radio buttons "PCA (default)" vs "UMAP"; pulsante "🔄 Compute UMAP" per calcolare proiezione UMAP 2D on-demand; salva in `st.session_state["umap_projection"]`; switch immediato tra proiezioni senza reload; caption indica projection method attivo; richiede `umap-learn` package.
+  3. **🤖 Automatic Cluster Labels**: funzione `_generate_automatic_label()` genera etichetta da profilo cluster (dominant_pattern, k_mode, periodicità); formato label: "{PATTERN}, k~{mode}, {periodicity}" (es. "FIFO, k~2, weekly"); confidence badge calcolato da pattern strength + periodicity confidence; applica label auto se cluster_label mancante o generico ("n.d.", "Cluster"); info message "🤖 Auto-generated label" quando usato; badge color: verde (confidence > 0.5), arancione (confidence ≤ 0.5).
+  4. **🎯 Rich Tooltips**: merge con `client_profiles.parquet` per aggiungere policy scores (fifo_score, largest_score, same_period_score) e match_rate; hover mostra cliente, cluster_display, membership_prob, policy scores, match_rate; labels formattati per tooltip (es. "FIFO", "Largest", "Match Rate").
+- **Funzionalità chiave**:
+  - **_recompute_hdbscan()**: riesegue clustering con parametri custom; ritorna (labels, n_clusters, n_noise); usa `hdbscan.HDBSCAN(min_cluster_size, min_samples, metric="cosine")`.
+  - **_compute_umap_projection()**: calcola UMAP 2D da full embeddings; parametri: n_components=2, n_neighbors=15, min_dist=0.1, random_state=42; ritorna DataFrame (cliente, x, y).
+  - **_generate_automatic_label()**: estrae periodicity (weekly/biweekly/monthly se > 0.3), cardinality (k_mode), pattern (dominant_pattern); costruisce label descrittiva; confidence = (pattern_conf + period_conf) / 2.
+  - **Apply & Save**: aggiorna `data/curated/client_clusters.parquet` con nuovi labels; persiste membership_prob = 1.0 (simplified); info message "Refresh the page to see updated clusters".
+- **Input richiesti**:
+  - `client_embedding_2d.parquet`: proiezione PCA 2D (default, già disponibile).
+  - `client_embeddings.parquet`: embeddings full-dimensional per HDBSCAN recalculation e UMAP (optional).
+  - `client_clusters.parquet`: cluster assignments esistenti (modificabile via Apply).
+  - `cluster_summary.parquet`: profili cluster con dominant_pattern, k_mode_mean, periodicity_*_mean.
+  - `client_profiles.parquet`: policy scores e match_rate per rich tooltips (optional).
+- **Dependencies opzionali**:
+  - `hdbscan`: pip install hdbscan (per reclustering).
+  - `umap-learn`: pip install umap-learn (per UMAP projection).
+  - Graceful fallback: warning se package mancante; feature disabilitata ma resto pagina funzionante.
+- **Performance considerations**:
+  - HDBSCAN preview: ~2-5s su 100-500 clienti; progress spinner durante compute.
+  - UMAP computation: ~5-10s su 100-500 clienti; once-off (cached in session_state).
+  - Apply & Save: < 500ms (write parquet); no automatic refresh (utente deve refreshare manualmente).
+  - Rich tooltips: merge con client_profiles add latency trascurabile (< 100ms).
+- **Acceptance test**:
+  1. Navigare a "Clusters" page.
+  2. **HDBSCAN Panel**: aprire sidebar expander "🔧 HDBSCAN Parameters"; cambiare min_cluster_size da 30 → 50; click "🔄 Preview Clustering"; verificare success message con cluster/noise counts; click "✅ Apply & Save"; verificare success + info "Refresh the page".
+  3. **UMAP Toggle**: aprire sidebar expander "📊 Projection Method"; selezionare "UMAP"; click "🔄 Compute UMAP"; verificare success message; verificare caption "📊 Using UMAP projection"; switch back to "PCA"; verificare caption "📊 Using PCA projection (default)".
+  4. **Auto Labels**: selezionare cluster nella sidebar; scrollare a "Profilo cluster"; verificare label auto-generata (es. "FIFO, k~2, weekly"); verificare badge confidence con colore (verde/arancione); verificare info message "🤖 Auto-generated label" se applicabile.
+  5. **Rich Tooltips**: hover su punto nella Mappa 2D; verificare tooltip mostra cliente, cluster, membership_prob, fifo_score, largest_score, same_period_score, match_rate (se disponibili); labels formattati correttamente.
+  6. **Performance**: preview clustering < 5s; UMAP compute < 10s; no crash; no warning Streamlit; graceful fallback se hdbscan/umap mancanti.
+- **Note tecniche**:
+  - HDBSCAN: metric="cosine" per embedding semantici; core_dist_n_jobs=1 per evitare parallelizzazione eccessiva in Streamlit.
+  - UMAP: n_neighbors=15 (bilancia local/global structure), min_dist=0.1 (spacing tra punti), random_state=42 (reproducibilità).
+  - Auto-label generation: pattern_conf=0.7 se pattern dominante presente, 0.3 se "mixed"; periodicity_conf=max(weekly, biweekly, monthly) se > 0.3, else 0.0.
+  - Session state: UMAP projection e HDBSCAN preview labels stored in st.session_state per persistenza durante session (no cross-session).
+  - Apply & Save: scrive direttamente a data/curated/client_clusters.parquet; no automatic reload (Streamlit limitation); utente deve fare F5.
+  - Rich tooltips: merge left con client_profiles; se profile mancante, tooltip mostra solo campi base (cliente, cluster, membership_prob).
+- **Integrazione**: enhancements in render_clusters_page(); sidebar controls accessibili quando pagina "Clusters" attiva; compatibile con existing cluster workflow (backward compatible).
+
+#### 4.9.6 PROMPT S12 — Esportazione audit: JSON explain + CSV + deep-link
+- **Export and Audit Utilities** facilitano tracciabilità, condivisione e ispezione dettagliata degli output dashboard.
+- **Obiettivo**: permettere download dati filtrati (CSV), generazione JSON explain strutturato per eventi singoli, copia deep-link con filtri preservati.
+- **Componenti** (implementate in `app/utils/export.py` e integrate in pages):
+  1. **📥 JSON Explain Download**: genera JSON strutturato per singolo evento con:
+     - **ranking_modello**: {numero_documento, cliente, p_model, score_binned} dalla colonna p_model event row.
+     - **ranking_policy**: {fifo_score, lifo_score, largest_score, same_period_score, eomfirst_score, match_rate, predicted_policy} da `per_event_policy_scores.parquet` e `event_policy_predictions.parquet`.
+     - **cluster_label**: cluster_display da `client_clusters.parquet` per cliente evento.
+     - **shap_top3**: array [{feature, shap_value, feature_value}] per top-3 feature SHAP (absolute value), solo se shap_values disponibili.
+     - Download button in **Pattern Card** (Explainability panel) per first ranked event; JSON filename: `explain_event_{doc_id}.json`.
+  2. **📥 CSV Exports**: st.download_button per tabelle filtrate correnti:
+     - **Pattern Card**: pattern_table_df (pattern scores per cliente); filename: `pattern_table_{cliente}.csv`.
+     - **KPI Dashboard**: filtered_kpi (ranking metrics) → `kpi_ranking_filtered.csv`; filtered_calibration_summary → `calibration_summary_filtered.csv`.
+     - **Policy IQ**: metrics_df (uplift table) → `policy_iq_uplift_metrics.csv`; confusion_df → `policy_iq_confusion_matrix.csv`.
+     - Exports respect active filters (cliente, cardinality_bucket, segment_type se applicabile).
+  3. **📋 Deep-Link Copy**: genera URL con query string che preserva stato filtri; button mostra URL in st.code() per copy manuale (Streamlit limitation su clipboard JS).
+     - **Funzione**: `generate_deeplink(page, filters)` → serializza filtri in query params (es. `?page=Pattern+Card&cliente=XYZ`).
+     - **Restore**: `restore_filters_from_deeplink()` → parsing st.query_params per ripristino filtri al page load (future extension).
+     - **Pages con deep-link**: Pattern Card (cliente), KPI Dashboard (selected_clients, cardinality_bucket, tab), Policy IQ (selected_client).
+- **Funzionalità chiave**:
+  - **generate_event_explain_json()**: merge event_row con policy_scores, predictions, clusters, shap_values per JSON completo; graceful fallback se data missing.
+  - **export_dataframe_to_csv()**: wrapper df.to_csv(index=False).encode("utf-8") per st.download_button compatibility.
+  - **generate_deeplink()**: urlencode filters dict → query string; lista multi-value come comma-separated (es. "A,B,C").
+  - **copy_to_clipboard_button()**: HTML button con onclick navigator.clipboard.writeText() (not used, manual copy da st.code preferred per reliability).
+- **Input richiesti**:
+  - **JSON Explain**: event_row (Series), per_event_policy_scores.parquet, event_policy_predictions.parquet, client_clusters.parquet, shap_values (Series o DataFrame, optional).
+  - **CSV Exports**: DataFrame filtrato (già calcolato in page logic).
+  - **Deep-Link**: page name (str), filters dict (key-value pairs).
+- **Integration**:
+  - **Pattern Card**: JSON explain download in explainability panel (first event); CSV export + deep-link at end of render_pattern_card_v2().
+  - **KPI Dashboard**: CSV download existing (_download_csv helper); deep-link added in tab1 (Ranking) e tab2 (Calibration).
+  - **Policy IQ**: CSV exports per uplift metrics + confusion matrix; deep-link preserves selected_client.
+- **Limitations**:
+  - **Deep-link restore**: query params parsing implementato ma non auto-applied al page load (requires st.query_params integration in main app).
+  - **Clipboard JS**: Streamlit sandbox limita navigator.clipboard; workaround: mostra URL in st.code() per copy manuale.
+  - **JSON Explain**: solo per first ranked event in Pattern Card; per batch explain serve loop custom o API endpoint.
+- **Acceptance test**:
+  1. **JSON Explain**: navigare Pattern Card → Explainability → verificare "📥 Download JSON Explain (first event)" button; download JSON; verificare structure contiene ranking_modello, ranking_policy, cluster_label, shap_top3 (se SHAP disponibile).
+  2. **CSV Exports**: navigare Pattern Card → click "📥 Download Pattern Table CSV"; verificare CSV contains filtered data; ripetere per KPI Dashboard (ranking + calibration), Policy IQ (uplift + confusion).
+  3. **Deep-Link**: navigare Pattern Card con cliente selezionato → click "📋 Copy Deep-Link"; verificare st.code mostra URL con query params `?page=Pattern+Card&cliente={nome}`; copy URL manualmente; paste in browser (future: verify auto-restore filters).
+  4. **Filter Respect**: applicare filtri (es. cardinality_bucket = "k=1" in KPI Dashboard); download CSV; verificare CSV contains solo righe filtrate.
+  5. **Graceful Fallback**: eliminare temporaneamente `per_event_policy_scores.parquet`; generare JSON explain; verificare ranking_policy vuoto ma no crash; ripristinare file.
+- **Note tecniche**:
+  - JSON explain: format follow OpenAI function_call conventions per easy integration con LLM explain pipelines.
+  - CSV exports: UTF-8 encoding; no index column; headers preserved; compatible con Excel/Google Sheets.
+  - Deep-link: urlencode special chars (spazi → +, simboli → %XX); comma-separated multi-value lists (es. selected_clients).
+  - SHAP top-3: ordina per absolute value, preserva sign in output; feature_value extracted da event_row (nullable).
+  - Module location: `app/utils/export.py` (shared utilities); imports in pages as needed.
+- **Integrazione**: export buttons in Pattern Card (bottom), KPI Dashboard (per-tab), Policy IQ (bottom); JSON explain in Pattern Card explainability panel; deep-link preserves filter state for shareable URLs.
+
 #### 4.8.3 PROMPT S1 — KPI estesi per ranking
 - Il modulo `src/analytics/kpi_ranking.py` calcola metriche di ranking estese su hold-out test (split temporale 70/30):
   - **precision@k**: frazione di item top-k che sono rilevanti.

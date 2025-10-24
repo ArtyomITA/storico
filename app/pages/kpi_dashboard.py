@@ -10,6 +10,8 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
+from app.utils.export import generate_deeplink
+
 
 @st.cache_data(show_spinner=False)
 def _load_parquet_cached(path: Path) -> pd.DataFrame:
@@ -381,11 +383,38 @@ def render_kpi_dashboard_page(tables: Dict[str, pd.DataFrame], developer_metrics
         _render_ranking_tab(kpi_ranking, filtered_kpi)
         st.markdown("---")
         _download_csv(filtered_kpi, "kpi_ranking_filtered.csv")
+        
+        # S12: Deep-link
+        st.markdown("#### 📋 Deep-Link (PROMPT S12)")
+        deeplink_url = generate_deeplink(
+            page="KPI Dashboard",
+            filters={
+                "selected_clients": selected_clients if selected_clients else [],
+                "cardinality_bucket": cardinality_bucket if cardinality_bucket else "all",
+            },
+        )
+        if st.button("📋 Copy Deep-Link (Ranking)", key="deeplink_ranking"):
+            st.code(deeplink_url, language=None)
+            st.caption("⚠️ Copy the URL above manually (Streamlit limitation).")
 
     with tab2:
         if not calibration_summary.empty:
             _render_calibration_tab(calibration_summary, calibration_bins, filtered_calibration_summary)
             st.markdown("---")
             _download_csv(filtered_calibration_summary, "calibration_summary_filtered.csv")
+            
+            # S12: Deep-link
+            st.markdown("#### 📋 Deep-Link (PROMPT S12)")
+            deeplink_url_cal = generate_deeplink(
+                page="KPI Dashboard",
+                filters={
+                    "selected_clients": selected_clients if selected_clients else [],
+                    "cardinality_bucket": cardinality_bucket if cardinality_bucket else "all",
+                    "tab": "calibration",
+                },
+            )
+            if st.button("📋 Copy Deep-Link (Calibration)", key="deeplink_calibration"):
+                st.code(deeplink_url_cal, language=None)
+                st.caption("⚠️ Copy the URL above manually (Streamlit limitation).")
         else:
             st.info("No calibration data available. Run calibration diagnostics first.")

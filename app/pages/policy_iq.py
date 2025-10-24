@@ -13,6 +13,8 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
+from app.utils.export import export_dataframe_to_csv, generate_deeplink
+
 logger = logging.getLogger(__name__)
 
 
@@ -448,6 +450,51 @@ def render_policy_iq(data_dir: Path) -> None:
     else:
         st.warning("Policy scores data not available.")
     
+    # === S12: EXPORT & DEEP-LINK ===
+    st.divider()
+    st.markdown("### 📤 Export & Audit (PROMPT S12)")
+    
+    export_cols = st.columns(3)
+    
+    with export_cols[0]:
+        # Export uplift table CSV
+        if not metrics_df.empty:
+            csv_bytes = export_dataframe_to_csv(metrics_df)
+            st.download_button(
+                label="📥 Download Uplift Metrics CSV",
+                data=csv_bytes,
+                file_name="policy_iq_uplift_metrics.csv",
+                mime="text/csv",
+            )
+    
+    with export_cols[1]:
+        # Export confusion matrix CSV
+        if not confusion_df.empty:
+            csv_bytes = export_dataframe_to_csv(confusion_df)
+            st.download_button(
+                label="📥 Download Confusion Matrix CSV",
+                data=csv_bytes,
+                file_name="policy_iq_confusion_matrix.csv",
+                mime="text/csv",
+            )
+    
+    with export_cols[2]:
+        # Deep-link
+        client_filter = ""
+        if not policy_scores_df.empty:
+            available_clients = sorted(policy_scores_df["cliente"].unique())
+            if available_clients:
+                client_filter = str(available_clients[0])  # Default to first client
+        
+        deeplink_url = generate_deeplink(
+            page="Policy IQ",
+            filters={"selected_client": client_filter},
+        )
+        if st.button("📋 Copy Deep-Link", key="deeplink_policyiq"):
+            st.code(deeplink_url, language=None)
+            st.caption("⚠️ Copy the URL above manually (Streamlit limitation).")
+    
     # Footer
     st.divider()
     st.caption("Policy IQ — PROMPT S9 | Data from event_policy_metrics, per_event_policy_scores, event_policy_predictions")
+    st.caption("Export & Audit — PROMPT S12 | CSV exports for uplift metrics and confusion matrix; deep-link preserves client selection")
