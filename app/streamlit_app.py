@@ -21,10 +21,10 @@ PROJECT_ROOT = CURRENT_DIR.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from app.pages.clusters import render_clusters_page
-from app.pages.kpi_dashboard import render_kpi_dashboard_page
-from app.pages.pattern_card_v2 import render_pattern_card_v2
-from app.pages.policy_iq import render_policy_iq
+from app.page_components.clusters import render_clusters_page
+from app.page_components.kpi_dashboard import render_kpi_dashboard_page
+from app.page_components.pattern_card_v2 import render_pattern_card_v2
+from app.page_components.policy_iq import render_policy_iq
 
 from src.analytics.pattern_detectors import POLICY_NAMES, infer_pattern_label
 from src.report.nlg_patterns import render_pattern_summary
@@ -1626,6 +1626,58 @@ def render_pattern_card(
 
 
 def main() -> None:
+    with st.sidebar.expander("📤 Dati", expanded=False):
+        mock_mode = st.checkbox(
+            "Usa Mock mode (isola i file)",
+            value=False,
+            key="mock_mode",
+            help="Se attivo, i file caricati vengono salvati in data_mock/raw/uploads e gli output in data_mock/curated.",
+        )
+        uploaded_files = st.file_uploader(
+            "Carica file SAP (.xlsx/.csv)",
+            type=["xlsx", "csv"],
+            accept_multiple_files=True,
+            key="sap_uploader",
+        )
+        if st.button("Ingesta file caricati", key="ingest_uploads"):
+            base_data_dir = BASE_DIR / ("data_mock" if mock_mode else "data")
+            raw_upload_dir = base_data_dir / "raw" / "uploads"
+            raw_upload_dir.mkdir(parents=True, exist_ok=True)
+
+            saved_paths: List[Path] = []
+            for uploaded in uploaded_files or []:
+                target_path = raw_upload_dir / uploaded.name
+                target_path.write_bytes(uploaded.getbuffer())
+                saved_paths.append(target_path)
+
+            if not saved_paths:
+                st.info("Nessun file selezionato.")
+            else:
+                try:
+                    from src.data import ingest_multi  # local import to avoid eager CLI side-effects
+
+                    cli_args: List[str] = []
+                    for file_path in saved_paths:
+                        cli_args.extend(["--input", str(file_path)])
+
+                    output_path = base_data_dir / "curated" / "line_items.parquet"
+                    cli_args.extend(["--output", str(output_path)])
+
+                    docmap_path = base_data_dir / "curated" / "doc_map.parquet"
+                    cli_args.extend(["--docmap", str(docmap_path)])
+
+                    with st.spinner("Esecuzione ingest..."):
+                        ingest_multi.run(cli_args)
+                except Exception as exc:  # pragma: no cover - runtime feedback
+                    st.error(f"Ingest fallita: {exc}")
+                else:
+                    st.session_state["ingest_notice"] = f"Ingest completata: {len(saved_paths)} file"
+                    st.experimental_rerun()
+
+    notice_message = st.session_state.pop("ingest_notice", None)
+    if notice_message:
+        st.sidebar.success(notice_message)
+
     tables, missing = load_curated_tables()
     if missing:
         st.sidebar.warning("File mancanti: " + ", ".join(missing))

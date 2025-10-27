@@ -577,6 +577,54 @@ Each stage reads the artefacts produced by prior steps and fails fast if prerequ
   - Module location: `app/utils/export.py` (shared utilities); imports in pages as needed.
 - **Integrazione**: export buttons in Pattern Card (bottom), KPI Dashboard (per-tab), Policy IQ (bottom); JSON explain in Pattern Card explainability panel; deep-link preserves filter state for shareable URLs.
 
+#### 4.9.7 Architettura Streamlit — Struttura modulare dettagliata
+- **Entrypoint principale** `app/streamlit_app.py`:
+  - Gestisce bootstrap dell'app, caricamento tabelle curate (`load_curated_tables()`) e repository feature (`load_feature_repository()`), routing delle pagine e toggle **Developer mode**.
+  - Mantiene lo stato condiviso in `st.session_state` (es. `selected_client`) e registra metriche diagnostiche tramite `_section_tracker()` che arricchisce `developer_metrics["sections"]` con durata dei blocchi UI.
+  - Espone loader di modelli con cache (`load_catboost_bundle()`, `load_autogluon_predictor()`, `safe_calibrate()`), così i modelli vengono deserializzati una sola volta per sessione grazie a `@st.cache_resource`.
+
+- **Gestione dati e caching**:
+  - `load_curated_tables()` legge in modo pigro tutti i parquet richiesti dalle pagine e ritorna un dizionario `{nome_tabella: DataFrame}` più la lista di file mancanti; il risultato è memorizzato con `@st.cache_data(show_spinner=False)` per evitare I/O ripetuto.
+  - `load_feature_repository()` carica `train_features.parquet` e normalizza colonne CatBoost/AutoGluon (liste `cat_feature_cols`, `auto_feature_cols`, indici categorici); anch'esso cachato per ridurre latenza nel pannello Explainability.
+  - Ogni pagina riceve il dictionary `tables` e seleziona solo ciò che serve, minimizzando copie di DataFrame (tutti i filtri operano su slice `.copy()` quando necessario per evitare `SettingWithCopyWarning`).
+
+- **Router e navigazione**:
+  - `PAGE_OPTIONS = ("Pattern Card", "KPI Dashboard", "Data Explorer", "Clusters", "Policy IQ")` alimenta `st.sidebar.radio` e determina quale funzione di rendering invocare.
+  - Per ogni voce è definito un wrapper che applica `_section_tracker` (es. `_render_pattern_card_v2`, `_render_kpi_dashboard`, `_render_clusters`) così i tempi finisco automaticamente nel pannello developer.
+  - La sidebar centralizza selezione cliente, toggle developer e messaggi su file mancanti; i filtri specifici di pagina risiedono nelle rispettive funzioni, evitando conflitti di chiavi in `st.session_state`.
+
+- **Developer Mode integrato**:
+  - Quando attivo, le pagine aggiungono DataFrame significativi al dizionario `developer_metrics["dataframes"]` tramite `_record_dataframe()` (es. eventi filtrati, pattern scores) e al termine chiamano `_render_developer_panel()` per mostrare timing, memoria, log tail, warning e metadati modello.
+  - Le funzioni `_load_warning_log_records()` e `_load_champion_metadata()` forniscono i dati aggiuntivi utilizzati nelle tab ⚠️ e 🏆 senza caricare l'intero file log quando la modalità è spenta.
+
+- **Pagine e componenti**:
+
+| Pagina | Modulo | Funzione entry-point | Blocchi UI principali | Dataset richiesti (minimo) |
+| --- | --- | --- | --- | --- |
+| Pattern Card (default) | `app/pages/pattern_card_v2.py` | `render_pattern_card_v2()` | Analisi visive 12 mesi, Cruscotto metriche (cardinality/policy), Claim+Evidence, Metriche aggiuntive, Explainability (Top-k, SHAP, What-if), Export & audit | `events`, `client_pattern_scores`, `pattern_table`, `train_features` (feature repository), `per_event_policy_scores`, `event_policy_predictions`, `client_clusters` |
+| KPI Dashboard | `app/pages/kpi_dashboard.py` | `render_kpi_dashboard_page()` | Tab Ranking (metriche globali/bucket/per cliente), Tab Calibration (metric cards + reliability curves), download CSV | `kpi_ranking`, `calibration_summary`, `calibration_bins` |
+| Data Explorer | `app/streamlit_app.py` | `render_data_explorer_page()` | Filtro multi-colonna, tab Eventi/Cardinalità/Policy con grafici Plotly, tabella interattiva scaricabile | `line_items` o `event_items`, `events`, `client_pattern_scores`, `per_event_policy_scores` |
+| Clusters | `app/pages/clusters.py` | `render_clusters_page()` | Proiezione 2D PCA/UMAP, pannello parametri HDBSCAN, statistiche cluster, lista clienti, spiegazioni policy | `client_embedding_2d`, `client_embeddings` (per UMAP/HDBSCAN live), `client_clusters`, `cluster_summary`, `client_profiles` |
+| Policy IQ | `app/pages/policy_iq.py` | `render_policy_iq()` | Matrice confusione, tabella uplift, explain tiles per cliente | `event_policy_confusion`, `event_policy_metrics`, `per_event_policy_scores`, `event_policy_predictions` |
+
+- **Utilità condivise**:
+  - `app/utils/export.py` contiene gli helper per export CSV, generazione JSON explain e creazione deep-link; le pagine li importano per mantenere la logica di audit consistente.
+  - Il modulo definisce `_find_column()` che permette di tollerare alias nelle colonne (es. `numero_documento` vs `Numero documento`) evitando crash quando gli input cambiano.
+
+- **Gestione grafici Plotly**:
+  - Tutti i `st.plotly_chart` sono stati aggiornati all'API moderna con `width="stretch"`; dove serve nascondere i menù di default, la configurazione passa da `plotly.io.to_json(fig, config=...)` oppure tramite `st.plotly_chart(fig, config={...})` (preferito rispetto ai parametri deprecati `displayModeBar`, `use_container_width`).
+  - I grafici definiscono `hovertemplate` con valori numerici alti precisione e band di confidenza (ACF, reliability curves) calcolate inline.
+
+- **Session state & deep-link**:
+  - `restore_filters_from_deeplink()` (quando verrà abilitato) leggerà `st.query_params` e ripopolerà i widget; attualmente l'app espone i link via `generate_deeplink()` e pulsanti `st.code()` per copia manuale.
+  - I widget hanno `key` specifici per pagina (`model_filter_calibration`, `boost_alpha`, `explorers_table_search`) così la navigazione tra pagine non resetta lo stato degli altri componenti.
+
+- **Dipendenze opzionali**:
+  - Alcune feature (es. pannello Clusters) si attivano solo se `hdbscan` o `umap-learn` sono installati; la pagina rileva l'assenza del package e mostra `st.warning` senza bloccare il resto dell'app.
+  - `lightgbm` è necessario per caricare bundle AutoGluon con base learner LightGBM; il requisito è ora esplicito in `requirements.txt`.
+
+Questa sezione funge da mappa per chi deve estendere o debuggare l'app Streamlit: conoscere quali tabelle alimentano ciascun blocco e dove risiedono gli helper riduce il tempo di onboarding e minimizza il rischio di rompere caching o developer diagnostics.
+
 #### 4.8.3 PROMPT S1 — KPI estesi per ranking
 - Il modulo `src/analytics/kpi_ranking.py` calcola metriche di ranking estese su hold-out test (split temporale 70/30):
   - **precision@k**: frazione di item top-k che sono rilevanti.
