@@ -5,6 +5,7 @@ import functools
 import importlib
 import json
 import logging
+import os
 import pickle
 import sys
 import time
@@ -35,7 +36,21 @@ st.set_page_config(page_title="Pattern Card", page_icon="📊", layout="wide")
 LOGGER = logging.getLogger(__name__)
 
 BASE_DIR = Path(__file__).resolve().parents[1]
-CURATED_DIR = BASE_DIR / "data" / "curated"
+
+
+def _data_root() -> Path:
+    """Return data root directory: data_mock/ when mock_mode active, else data/."""
+    if st.session_state.get("mock_mode"):
+        return BASE_DIR / "data_mock"
+    return BASE_DIR / Path(os.getenv("APP_DATA_ROOT", "data"))
+
+
+def _p(*parts: str) -> Path:
+    """Build a path relative to the active data root."""
+    return _data_root().joinpath(*parts)
+
+
+CURATED_DIR = _p("curated")
 MODELS_DIR = BASE_DIR / "models"
 CATBOOST_MODEL_PATH = MODELS_DIR / "catboost.cbm"
 CALIBRATOR_PATH = MODELS_DIR / "calibrator.pkl"
@@ -464,7 +479,7 @@ def _render_developer_panel(metrics: Dict[str, Any]) -> None:
 @st.cache_data(show_spinner=False)
 def load_curated_tables() -> Tuple[Dict[str, pd.DataFrame], list[str]]:
     """Load curated parquet tables required for the dashboard."""
-    base_dir = CURATED_DIR
+    base_dir = _p("curated")
     required = {
         "events": "events.parquet",
         "event_items": "event_items.parquet",
@@ -587,14 +602,14 @@ def select_autogluon_features(df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.Series
 
 @st.cache_data(show_spinner=False)
 def load_feature_repository() -> Tuple[pd.DataFrame, List[str], List[int], List[str]]:
-    features_path = CURATED_DIR / "train_features.parquet"
+    features_path = _p("curated", "train_features.parquet")
     if not features_path.exists():
         LOGGER.warning("Feature store not found at %s", features_path)
         return pd.DataFrame(), [], [], []
 
     features = pd.read_parquet(features_path)
-    event_items_path = CURATED_DIR / "event_items.parquet"
-    events_path = CURATED_DIR / "events.parquet"
+    event_items_path = _p("curated", "event_items.parquet")
+    events_path = _p("curated", "events.parquet")
 
     event_items = pd.read_parquet(event_items_path) if event_items_path.exists() else pd.DataFrame()
     events = pd.read_parquet(events_path) if events_path.exists() else pd.DataFrame()
@@ -1055,7 +1070,7 @@ def render_data_explorer_page(
     base_df = line_items if not line_items.empty else event_items
     if base_df.empty:
         st.info(
-            "Caricare `data/curated/line_items.parquet` o `event_items.parquet` per utilizzare il Data Explorer."
+            "Caricare `line_items.parquet` o `event_items.parquet` in `curated/` per utilizzare il Data Explorer."
         )
         return
 
@@ -1626,6 +1641,13 @@ def render_pattern_card(
 
 
 def main() -> None:
+    # PROMPT 9: Deep-link restore - parse query params at startup
+    qp = st.query_params
+    if "page" in qp and "selected_page" not in st.session_state:
+        st.session_state["selected_page"] = qp["page"]
+    if "cliente" in qp and "selected_client" not in st.session_state:
+        st.session_state["selected_client"] = qp["cliente"]
+    
     with st.sidebar.expander("📤 Dati", expanded=False):
         mock_mode = st.checkbox(
             "Usa Mock mode (isola i file)",
@@ -1633,6 +1655,51 @@ def main() -> None:
             key="mock_mode",
             help="Se attivo, i file caricati vengono salvati in data_mock/raw/uploads e gli output in data_mock/curated.",
         )
+        
+        # PROMPT 8: Mock data generator button
+        if mock_mode:
+            st.markdown("---")
+            st.markdown("**Dataset Demo**")
+            if st.button("📦 Crea dataset demo", key="create_mock_data"):
+                with st.spinner("Generazione dataset sintetico..."):
+                    try:
+                        import subprocess
+                        
+                        # Run mock data generator
+                        result = subprocess.run(
+                            [sys.executable, "-m", "scripts.make_mock_data"],
+                            cwd=str(BASE_DIR),
+                            capture_output=True,
+                            text=True,
+                            timeout=60,
+                        )
+                        
+                        if result.returncode != 0:
+                            st.error(f"Errore generazione mock: {result.stderr}")
+                        else:
+                            st.success("✓ Dataset sintetico creato")
+                            
+                            # Now run ingest on the mock data
+                            with st.spinner("Ingest dataset demo..."):
+                                from src.data import ingest_multi
+                                
+                                mock_file = _p("raw", "sap_mock.xlsx")
+                                output_path = _p("curated", "line_items.parquet")
+                                docmap_path = _p("curated", "doc_map.parquet")
+                                
+                                cli_args = [
+                                    "--input", str(mock_file),
+                                    "--output", str(output_path),
+                                    "--docmap", str(docmap_path),
+                                ]
+                                
+                                ingest_multi.run(cli_args)
+                                
+                                st.session_state["ingest_notice"] = "Dataset demo caricato: 50 clienti, 12-18 mesi"
+                                st.experimental_rerun()
+                    except Exception as exc:
+                        st.error(f"Errore: {exc}")
+        
         uploaded_files = st.file_uploader(
             "Carica file SAP (.xlsx/.csv)",
             type=["xlsx", "csv"],
@@ -1640,8 +1707,7 @@ def main() -> None:
             key="sap_uploader",
         )
         if st.button("Ingesta file caricati", key="ingest_uploads"):
-            base_data_dir = BASE_DIR / ("data_mock" if mock_mode else "data")
-            raw_upload_dir = base_data_dir / "raw" / "uploads"
+            raw_upload_dir = _p("raw", "uploads")
             raw_upload_dir.mkdir(parents=True, exist_ok=True)
 
             saved_paths: List[Path] = []
@@ -1660,10 +1726,10 @@ def main() -> None:
                     for file_path in saved_paths:
                         cli_args.extend(["--input", str(file_path)])
 
-                    output_path = base_data_dir / "curated" / "line_items.parquet"
+                    output_path = _p("curated", "line_items.parquet")
                     cli_args.extend(["--output", str(output_path)])
 
-                    docmap_path = base_data_dir / "curated" / "doc_map.parquet"
+                    docmap_path = _p("curated", "doc_map.parquet")
                     cli_args.extend(["--docmap", str(docmap_path)])
 
                     with st.spinner("Esecuzione ingest..."):
@@ -1677,6 +1743,184 @@ def main() -> None:
     notice_message = st.session_state.pop("ingest_notice", None)
     if notice_message:
         st.sidebar.success(notice_message)
+
+    # PROMPT 4 & 5: Operations tab + Quick Guide
+    developer_mode = st.sidebar.checkbox("Developer mode", value=False)
+    
+    if developer_mode:
+        with st.sidebar.expander("🔧 Operazioni", expanded=False):
+            st.markdown("**Pipeline End-to-End**")
+            st.caption("Esegui singoli step della pipeline. I log appaiono nella console.")
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                if st.button("🏗️ Build Events", key="op_events"):
+                    with st.spinner("Costruzione eventi..."):
+                        try:
+                            from src.features import build_events
+                            build_events.main([
+                                "--input", str(_p("curated", "line_items.parquet")),
+                                "--output", str(_p("curated", "events.parquet")),
+                                "--event-items", str(_p("curated", "event_items.parquet"))
+                            ])
+                            st.success("✓ Events costruiti")
+                        except Exception as e:
+                            st.error(f"Errore: {e}")
+                
+                if st.button("🏷️ Make Labels", key="op_labels"):
+                    with st.spinner("Generazione label..."):
+                        try:
+                            from src.features import make_labels
+                            make_labels.main([
+                                "--events", str(_p("curated", "events.parquet")),
+                                "--event-items", str(_p("curated", "event_items.parquet")),
+                                "--output", str(_p("curated", "train_pointwise.parquet"))
+                            ])
+                            st.success("✓ Labels generate")
+                        except Exception as e:
+                            st.error(f"Errore: {e}")
+                
+                if st.button("🧮 Make Features", key="op_features"):
+                    with st.spinner("Feature engineering..."):
+                        try:
+                            from src.features import make_features
+                            make_features.main([
+                                "--train-pointwise", str(_p("curated", "train_pointwise.parquet")),
+                                "--events", str(_p("curated", "events.parquet")),
+                                "--event-items", str(_p("curated", "event_items.parquet")),
+                                "--output", str(_p("curated", "train_features.parquet")),
+                                "--profiles", str(_p("curated", "client_profiles.parquet"))
+                            ])
+                            st.success("✓ Features pronte")
+                        except Exception as e:
+                            st.error(f"Errore: {e}")
+                
+                if st.button("▶️ Train CatBoost", key="op_catboost"):
+                    with st.spinner("Training CatBoost..."):
+                        try:
+                            from src.models import train as train_main
+                            train_main.main([
+                                "--model", "catboost",
+                                "--train-features", str(_p("curated", "train_features.parquet")),
+                                "--out", str(BASE_DIR / "models"),
+                                "--seed", "42"
+                            ])
+                            st.success("✓ CatBoost trained")
+                        except Exception as e:
+                            st.error(f"Errore: {e}")
+            
+            with col2:
+                if st.button("▶️ Train AutoGluon", key="op_autogluon"):
+                    with st.spinner("Training AutoGluon..."):
+                        try:
+                            from src.models import train as train_main
+                            train_main.main([
+                                "--model", "autogluon",
+                                "--train-features", str(_p("curated", "train_features.parquet")),
+                                "--out", str(BASE_DIR / "models"),
+                                "--seed", "42"
+                            ])
+                            st.success("✓ AutoGluon trained")
+                        except Exception as e:
+                            st.error(f"Errore: {e}")
+                
+                if st.button("🧬 Make Embeddings", key="op_embeddings"):
+                    with st.spinner("Generazione embeddings..."):
+                        try:
+                            from src.analytics import make_client_embeddings
+                            make_client_embeddings.main([
+                                "--features", str(_p("curated", "train_features.parquet")),
+                                "--output", str(_p("curated", "client_embeddings.parquet"))
+                            ])
+                            st.success("✓ Embeddings generati")
+                        except Exception as e:
+                            st.error(f"Errore: {e}")
+                
+                if st.button("🔬 Run HDBSCAN", key="op_hdbscan"):
+                    with st.spinner("Clustering HDBSCAN..."):
+                        try:
+                            from src.analytics import run_hdbscan
+                            run_hdbscan.main([
+                                "--embeddings", str(_p("curated", "client_embeddings.parquet")),
+                                "--min-cluster-size", "30",
+                                "--min-samples", "15",
+                                "--output", str(_p("curated", "client_clusters.parquet"))
+                            ])
+                            st.success("✓ Cluster calcolati")
+                        except Exception as e:
+                            st.error(f"Errore: {e}")
+                
+                if st.button("📊 Cluster Profile", key="op_cluster_profile"):
+                    with st.spinner("Profiling cluster..."):
+                        try:
+                            from src.analytics import cluster_profile
+                            cluster_profile.main([
+                                "--clusters", str(_p("curated", "client_clusters.parquet")),
+                                "--profiles", str(_p("curated", "client_profiles.parquet")),
+                                "--output", str(_p("curated", "cluster_summary.parquet"))
+                            ])
+                            st.success("✓ Cluster profilati")
+                        except Exception as e:
+                            st.error(f"Errore: {e}")
+            
+            st.markdown("---")
+            st.caption("**HDBSCAN params**: `min_samples` controlla rumore (default=min_cluster_size); metodo 'eom' sceglie cluster stabili su epsilon. [Docs](https://hdbscan.readthedocs.io)")
+        
+        with st.sidebar.expander("🧭 Guida rapida", expanded=False):
+            st.markdown("""
+**Workflow visibile per l'utente**
+
+**Prima di qualsiasi training:**
+- Pattern Card mostra heatmap eventi + pattern sintetico (regole deterministiche)
+- KPI Dashboard: vuota (nessun modello)
+- Explainability: non disponibile
+- Clusters: vuota
+
+**Dopo Features:**
+- ✓ `train_features.parquet`
+- ✓ `client_profiles.parquet`
+- Pattern Card popolata con metriche base
+
+**Dopo Train CatBoost:**
+- ✓ `models/catboost.cbm`
+- ✓ `models/calibrator.pkl`
+- ✓ `client_model_metrics_catboost.parquet`
+- Explainability: probabilità modello + SHAP (via `get_feature_importance(ShapValues)`)
+- KPI Dashboard: ranking/calibrazione CatBoost attivi
+
+**Dopo Train AutoGluon:**
+- ✓ `models/autogluon/` (TabularPredictor)
+- ✓ `client_model_metrics_autogluon.parquet`
+- Explainability: probabilità modello (no SHAP per AG)
+- KPI Dashboard: ranking/calibrazione AutoGluon attivi
+
+**Dopo Make Embeddings:**
+- ✓ `client_embeddings.parquet`
+- Clusters: embeddings disponibili per UMAP/PCA
+
+**Dopo Run HDBSCAN:**
+- ✓ `client_clusters.parquet`
+- Clusters: UMAP/t-SNE attivabili con colori cluster
+- Metodo 'eom' (Excess of Mass) seleziona cluster stabili su epsilon
+
+**Dopo Cluster Profile:**
+- ✓ `cluster_summary.parquet`
+- Clusters: statistiche aggregate per cluster visibili
+
+**File attesi completi** (vedi README sezione 0.2):
+- `line_items.parquet`, `events.parquet`, `event_items.parquet`
+- `train_pointwise.parquet`, `train_features.parquet`
+- `client_profiles.parquet`, `pattern_table.parquet`
+- `per_event_policy_scores.parquet`, `event_policy_predictions.parquet`
+- `kpi_ranking.parquet`, `calibration_summary.parquet`
+- `event_policy_metrics.parquet`, `client_embeddings.parquet`
+- `client_clusters.parquet`, `cluster_summary.parquet`
+
+**Link rapidi:**
+- [Medium: AutoGluon Tabular](https://medium.com/tag/autogluon)
+- [HDBSCAN Docs](https://hdbscan.readthedocs.io)
+            """)
 
     tables, missing = load_curated_tables()
     if missing:
@@ -1709,8 +1953,15 @@ def main() -> None:
     st.sidebar.header("Selezione")
     selected_client_value = st.sidebar.selectbox("Cliente", clients, key="selected_client")
     selected_client = str(selected_client_value)
+    
+    # PROMPT 6: Toggle to hide regmonth policy
+    hide_regmonth = st.sidebar.checkbox(
+        "Nascondi policy 'regmonth'",
+        value=True,
+        key="hide_regmonth",
+        help="Regmonth = 'stesso mese di registrazione', non 'pagato tutto il mese'. Attiva per escludere da grafici/metriche."
+    )
 
-    developer_mode = st.sidebar.checkbox("Developer mode", value=False)
     developer_metrics: Dict[str, Any] = {"sections": [], "dataframes": {}}
 
     if page == "KPI Dashboard":
@@ -1747,6 +1998,7 @@ def main() -> None:
                 tables=tables,
                 selected_client=selected_client,
                 clients=clients,
+                data_root_func=_data_root,
             )
 
         _render_clusters()
@@ -1759,7 +2011,7 @@ def main() -> None:
     if page == "Policy IQ":
         @_section_tracker(developer_metrics, "UI.PolicyIQ")
         def _render_policy_iq() -> None:
-            render_policy_iq(data_dir=BASE_DIR / "data")
+            render_policy_iq(data_dir=_data_root(), hide_regmonth=hide_regmonth)
 
         _render_policy_iq()
         if developer_mode:
@@ -1781,6 +2033,7 @@ def main() -> None:
             cat_cat_indices=cat_cat_indices,
             auto_feature_cols=auto_feature_cols,
             developer_metrics=developer_metrics,
+            hide_regmonth=hide_regmonth,
         )
     
     _render_pattern_card_v2()

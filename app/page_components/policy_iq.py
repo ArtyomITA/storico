@@ -342,12 +342,13 @@ def render_policy_tile(policy_info: Dict, predictions_df: pd.DataFrame) -> None:
 # Main Rendering Function
 # ============================================================================
 
-def render_policy_iq(data_dir: Path) -> None:
+def render_policy_iq(data_dir: Path, hide_regmonth: bool = False) -> None:
     """
     Render Policy IQ page with confusion matrix, uplift analysis, and explain tiles.
     
     Args:
         data_dir: Path to data directory
+        hide_regmonth: If True, filter out regmonth policy from analysis
     """
     st.title("📊 Policy IQ — Analisi classificatore delle policy")
     
@@ -366,6 +367,22 @@ def render_policy_iq(data_dir: Path) -> None:
         metrics_df = load_policy_metrics(data_dir)
         policy_scores_df = load_per_event_policy_scores(data_dir)
         predictions_df = load_event_policy_predictions(data_dir)
+    
+    # PROMPT 6: Filter regmonth if requested
+    if hide_regmonth:
+        if not confusion_df.empty and "true_policy" in confusion_df.columns:
+            confusion_df = confusion_df[confusion_df["true_policy"] != "regmonth"].copy()
+            if "pred_policy" in confusion_df.columns:
+                confusion_df = confusion_df[confusion_df["pred_policy"] != "regmonth"].copy()
+        
+        if not metrics_df.empty and "policy" in metrics_df.columns:
+            metrics_df = metrics_df[metrics_df["policy"] != "regmonth"].copy()
+        
+        if not policy_scores_df.empty:
+            # Filter policy_regmonth column if exists
+            regmonth_cols = [c for c in policy_scores_df.columns if "regmonth" in c.lower()]
+            if regmonth_cols:
+                policy_scores_df = policy_scores_df.drop(columns=regmonth_cols)
     
     if confusion_df.empty and metrics_df.empty and policy_scores_df.empty:
         st.error("Dati di policy non disponibili. Esegui prima la pipeline di analytics.")

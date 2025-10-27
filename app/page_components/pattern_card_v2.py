@@ -297,19 +297,23 @@ def plot_cardinality_with_metrics(events: pd.DataFrame, k_mode: float, k_entropy
     return fig, metrics
 
 
-def plot_policy_bars_enhanced(score_row: pd.Series) -> go.Figure:
+def plot_policy_bars_enhanced(score_row: pd.Series, active_policies: Optional[List[str]] = None) -> go.Figure:
     """
     Policy recall bars with exact recall values and confidence tooltips.
     
     Args:
         score_row: Series with policy scores and confidence
+        active_policies: List of policies to include (defaults to all POLICY_NAMES)
         
     Returns:
         Plotly bar chart with numerical tooltips
     """
+    if active_policies is None:
+        active_policies = POLICY_NAMES
+    
     policy_data = []
     
-    for policy in POLICY_NAMES:
+    for policy in active_policies:
         recall = float(score_row.get(f"{policy}_score", 0.0))
         policy_data.append({
             "policy": policy.upper(),
@@ -416,6 +420,7 @@ def render_pattern_card_v2(
     cat_cat_indices: Optional[Sequence[int]] = None,
     auto_feature_cols: Optional[Sequence[str]] = None,
     developer_metrics: Optional[Dict[str, Any]] = None,
+    hide_regmonth: bool = False,
 ) -> None:
     """
     Render Pattern Card v2 with 2-column layout: visual + metrics + explainability.
@@ -430,8 +435,12 @@ def render_pattern_card_v2(
         cat_cat_indices: Optional CatBoost categorical indices
         auto_feature_cols: Optional AutoGluon feature columns
         developer_metrics: Optional metrics tracking dict
+        hide_regmonth: If True, exclude regmonth policy from charts/metrics
     """
     st.title(f"📊 Scheda pattern — Cliente {selected_client}")
+    
+    # PROMPT 6: Filter policy names if hide_regmonth is active
+    active_policies = [p for p in POLICY_NAMES if p != "regmonth" or not hide_regmonth]
     
     # Filter data for selected client
     client_events = events[events["cliente"] == selected_client].copy()
@@ -501,7 +510,7 @@ def render_pattern_card_v2(
 
         # Policy bars with recall + confidence
         st.plotly_chart(
-            plot_policy_bars_enhanced(score_row),
+            plot_policy_bars_enhanced(score_row, active_policies=active_policies),
             width="stretch",
             key="policy_bars",
         )
@@ -526,11 +535,26 @@ def render_pattern_card_v2(
     st.markdown("---")
     st.markdown("### 📏 Metriche aggiuntive")
     
-    extra_cols = st.columns(4)
+    # PROMPT 7: Add month coverage metrics
+    extra_cols = st.columns(6)
     extra_cols[0].metric("Concentrazione DOW", f"{float(score_row.get('dow_concentration', 0.0)):.2f}")
     extra_cols[1].metric("Concentrazione DOM", f"{float(score_row.get('dom_concentration', 0.0)):.2f}")
     extra_cols[2].metric("# Eventi", f"{len(client_events)}")
     extra_cols[3].metric("Gap medio", f"{gaps.mean():.1f} giorni" if gaps.size > 0 else "n.d.")
+    
+    # Month coverage metrics (PROMPT 7)
+    month_cov_mean = float(score_row.get("month_coverage_mean", 0.0))
+    month_cov_full_rate = float(score_row.get("month_coverage_full_rate", 0.0))
+    extra_cols[4].metric(
+        "📅 Copertura mese media",
+        f"{month_cov_mean:.1%}",
+        help="Media della percentuale di fatture del mese pagate per evento"
+    )
+    extra_cols[5].metric(
+        "✅ Mese completo %",
+        f"{month_cov_full_rate:.1%}",
+        help="% eventi con copertura = 100% (tutte fatture del mese pagate)"
+    )
     
     # === EXPLAINABILITY PANEL (full width) ===
     if (feature_repository is not None and not feature_repository.empty 
@@ -542,6 +566,7 @@ def render_pattern_card_v2(
             cat_feature_cols=cat_feature_cols,
             cat_cat_indices=cat_cat_indices,
             auto_feature_cols=auto_feature_cols or [],
+            hide_regmonth=hide_regmonth,
             developer_metrics=developer_metrics,
         )
     
@@ -620,6 +645,7 @@ def render_explainability_panel(
     cat_feature_cols: Sequence[str],
     cat_cat_indices: Sequence[int],
     auto_feature_cols: Sequence[str],
+    hide_regmonth: bool = False,
     developer_metrics: Optional[Dict[str, Any]] = None,
 ) -> None:
     """
@@ -632,6 +658,7 @@ def render_explainability_panel(
         cat_feature_cols: CatBoost feature column names
         cat_cat_indices: CatBoost categorical feature indices
         auto_feature_cols: AutoGluon feature column names
+        hide_regmonth: If True, hide regmonth policy from boost options
         developer_metrics: Optional metrics tracking dict
     """
     st.markdown("---")
@@ -831,12 +858,14 @@ def render_explainability_panel(
     
     # === WHAT-IF POLICY GATING ===
     st.markdown("---")
-    st.markdown("#### 🎛️ Simula policy gating")
+    st.markdown("####  🎛️ Simula policy gating")
     st.caption("Simula l'effetto di un boost su policy specifiche: `p_i' = p_i × (1 + α)`")
     
     # Policy boost controls
     st.markdown("**Seleziona le policy da potenziare:**")
     
+    # Determine number of columns based on regmonth visibility
+    n_policies = 6 if not hide_regmonth else 5
     boost_cols = st.columns(3)
     
     with boost_cols[0]:
@@ -849,6 +878,15 @@ def render_explainability_panel(
     
     with boost_cols[2]:
         lifo_boost = st.checkbox("LIFO", value=False, key="boost_lifo")
+        if not hide_regmonth:
+            regmonth_boost = st.checkbox(
+                "Mese registrazione",
+                value=False,
+                key="boost_regmonth",
+                help="Regmonth = stesso mese di registrazione"
+            )
+        else:
+            regmonth_boost = False
     
     # Alpha slider
     alpha = st.slider(
@@ -873,6 +911,8 @@ def render_explainability_panel(
         active_boosts.append("fifo")
     if lifo_boost:
         active_boosts.append("lifo")
+    if not hide_regmonth and regmonth_boost:
+        active_boosts.append("regmonth")
     
     if active_boosts:
         active_labels = ", ".join([POLICY_LABELS_IT.get(p, p.upper()) for p in active_boosts])

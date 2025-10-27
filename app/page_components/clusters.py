@@ -268,6 +268,7 @@ def render_clusters_page(
     tables: Dict[str, pd.DataFrame],
     selected_client: str,
     clients: Sequence[str],
+    data_root_func: Any = None,  # Function to get data root (for mock mode)
 ) -> None:
     st.title("🔬 Cluster Explorer — UX avanzata")
 
@@ -342,14 +343,21 @@ def render_clusters_page(
                             clusters_updated["cluster_label_numeric"] = labels
                             clusters_updated["membership_prob"] = 1.0  # Simplified
                             
-                            # Save to parquet
+                            # Save to parquet - respect mock mode
                             from pathlib import Path
-                            curated_dir = Path("data/curated")
+                            if data_root_func and callable(data_root_func):
+                                curated_dir = data_root_func() / "curated"
+                            else:
+                                curated_dir = Path("data/curated")
                             curated_dir.mkdir(parents=True, exist_ok=True)
                             clusters_updated.to_parquet(curated_dir / "client_clusters.parquet")
                             
                             st.success(f"✅ Salvato! Cluster aggiornati con parametri: {params}")
                             st.info("Aggiorna la pagina per vedere i cluster aggiornati.")
+                            
+                            # Clear preview from session state
+                            del st.session_state["hdbscan_preview_labels"]
+                            del st.session_state["hdbscan_preview_params"]
                         except Exception as e:
                             st.error(f"Salvataggio non riuscito: {e}")
         elif not HDBSCAN_AVAILABLE:

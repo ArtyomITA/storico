@@ -798,6 +798,16 @@ def main() -> None:
         tables["events"], candidate_table
     )
     cardinality_df = compute_cardinality_metrics(tables["events"])
+    
+    # PROMPT 7: Compute month coverage metrics
+    from src.analytics.month_coverage import compute_month_coverage_metrics
+    LOGGER.info("Computing month full payment coverage metrics")
+    coverage_df = compute_month_coverage_metrics(
+        tables["events"],
+        tables["event_items"],
+        tables.get("line_items", pd.DataFrame())
+    )
+    
     client_scores = build_client_pattern_scores(
         tables["events"],
         policy_scores,
@@ -805,6 +815,19 @@ def main() -> None:
         tables["train_features"],
         per_event_scores,
     )
+    
+    # PROMPT 7: Merge coverage metrics into client_scores
+    if not coverage_df.empty:
+        client_scores = client_scores.merge(
+            coverage_df[["cliente", "month_coverage_mean", "month_coverage_p95", "month_coverage_full_rate"]],
+            on="cliente",
+            how="left"
+        )
+        # Fill NaN with 0 for clients without coverage data
+        client_scores["month_coverage_mean"] = client_scores["month_coverage_mean"].fillna(0.0)
+        client_scores["month_coverage_p95"] = client_scores["month_coverage_p95"].fillna(0.0)
+        client_scores["month_coverage_full_rate"] = client_scores["month_coverage_full_rate"].fillna(0.0)
+        LOGGER.info("Merged month coverage metrics into client_pattern_scores")
 
     save_client_pattern_scores(client_scores, project_root)
     if not per_event_scores.empty:

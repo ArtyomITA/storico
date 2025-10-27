@@ -400,7 +400,29 @@ def render_kpi_dashboard_page(tables: Dict[str, pd.DataFrame], developer_metrics
         if not calibration_summary.empty:
             _render_calibration_tab(calibration_summary, calibration_bins, filtered_calibration_summary)
             st.markdown("---")
-            _download_csv(filtered_calibration_summary, "calibration_summary_filtered.csv")
+            st.markdown("### 📥 Downloads")
+            col1, col2 = st.columns(2)
+            with col1:
+                _download_csv(filtered_calibration_summary, "calibration_summary_filtered.csv")
+            with col2:
+                # Filter calibration bins by same criteria
+                filtered_calibration_bins = calibration_bins
+                if not calibration_bins.empty:
+                    # Apply model filter if specified
+                    if "model_filter_calibration" in st.session_state:
+                        model_filter = st.session_state.get("model_filter_calibration", [])
+                        if model_filter:
+                            filtered_calibration_bins = filtered_calibration_bins[
+                                filtered_calibration_bins["model"].isin(model_filter)
+                            ]
+                    # Apply segment filter if specified
+                    if "segment_filter_calibration" in st.session_state:
+                        segment_filter = st.session_state.get("segment_filter_calibration", "global")
+                        if segment_filter:
+                            filtered_calibration_bins = filtered_calibration_bins[
+                                filtered_calibration_bins["segment_type"] == segment_filter
+                            ]
+                _download_csv(filtered_calibration_bins, "calibration_bins_filtered.csv")
             
             # Deep-link
             st.markdown("#### 📋 Deep-Link")
