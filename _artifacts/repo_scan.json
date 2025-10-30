@@ -1,0 +1,614 @@
+{
+  "scan_timestamp": "2024-PROMPT0",
+  "repository_root": "c:\\Users\\Administrator\\Desktop\\lavoro\\storico",
+  "python_version": "3.11+",
+  "total_files": 39,
+  "files": {
+    "src/data/ingest.py": {
+      "functions": [
+        "read_sap_csv(path: Path) -> pd.DataFrame",
+        "validate_required_columns(df: pd.DataFrame) -> None",
+        "parse_dates(df: pd.DataFrame) -> pd.DataFrame",
+        "clean_currency_amounts(df: pd.DataFrame) -> pd.DataFrame"
+      ],
+      "classes": [],
+      "imports": {
+        "local": [],
+        "external": ["pandas", "pathlib.Path", "typing", "logging"]
+      },
+      "side_effects": ["pd.read_csv", "logging.info"]
+    },
+    "src/data/ingest_multi.py": {
+      "functions": [
+        "ingest_multiple_files(source_dir: Path, output_path: Path) -> pd.DataFrame",
+        "deduplicate_invoices(df: pd.DataFrame) -> pd.DataFrame"
+      ],
+      "classes": [],
+      "imports": {
+        "local": ["src.data.ingest"],
+        "external": ["pandas", "pathlib.Path", "logging"]
+      },
+      "side_effects": ["pd.concat", "df.to_parquet", "logging.info"]
+    },
+    "src/features/build_events.py": {
+      "functions": [
+        "build_payment_events(df: pd.DataFrame) -> pd.DataFrame",
+        "compute_event_gaps(events: pd.DataFrame) -> pd.Series",
+        "add_event_indices(events: pd.DataFrame) -> pd.DataFrame"
+      ],
+      "classes": [],
+      "imports": {
+        "local": [],
+        "external": ["pandas", "numpy", "pathlib.Path", "typing.List", "typing.Tuple", "logging"]
+      },
+      "side_effects": ["pd.to_datetime", "logging.debug"]
+    },
+    "src/features/make_features.py": {
+      "functions": [
+        "compute_temporal_features(events: pd.DataFrame) -> pd.DataFrame",
+        "compute_cadence_features(gaps: pd.Series) -> Dict[str, float]",
+        "compute_lag_features(events: pd.DataFrame, n_lags: int = 5) -> pd.DataFrame",
+        "compute_categorical_features(events: pd.DataFrame) -> pd.DataFrame",
+        "compute_amount_features(events: pd.DataFrame) -> pd.DataFrame",
+        "compute_client_aggregates(events: pd.DataFrame) -> pd.DataFrame"
+      ],
+      "classes": [],
+      "imports": {
+        "local": [],
+        "external": ["pandas", "numpy", "pathlib.Path", "typing.Dict", "typing.List", "logging"]
+      },
+      "side_effects": ["logging.info", "logging.warning"]
+    },
+    "src/features/make_labels.py": {
+      "functions": [
+        "label_open_invoices_at_cutoff(events: pd.DataFrame, cutoff_date: str) -> pd.Series",
+        "compute_binary_labels(scores: pd.Series, threshold: float = 2.5) -> pd.Series",
+        "time_based_train_test_split(df: pd.DataFrame, train_end: str, test_start: str) -> Tuple[pd.DataFrame, pd.DataFrame]"
+      ],
+      "classes": [],
+      "imports": {
+        "local": [],
+        "external": ["pandas", "numpy", "typing.Tuple", "logging"]
+      },
+      "side_effects": ["logging.info"]
+    },
+    "src/models/train.py": {
+      "functions": [
+        "run_catboost(X_train: pd.DataFrame, y_train: pd.Series, X_val: pd.DataFrame, y_val: pd.Series, cat_features: List[int], output_dir: Path) -> Dict[str, Any]",
+        "run_autogluon(X_train: pd.DataFrame, y_train: pd.Series, X_val: pd.DataFrame, y_val: pd.Series, output_dir: Path, time_limit: int = 3600) -> Dict[str, Any]",
+        "ensemble_predictions(catboost_probs: np.ndarray, autogluon_probs: np.ndarray, weights: Tuple[float, float] = (0.5, 0.5)) -> np.ndarray"
+      ],
+      "classes": [
+        "ChampionMetrics"
+      ],
+      "imports": {
+        "local": ["src.models.train_catboost as cat", "src.models.train_autogluon as auto"],
+        "external": ["pandas", "numpy", "pathlib.Path", "typing.Dict", "typing.List", "typing.Any", "typing.Tuple", "logging", "dataclasses.dataclass"]
+      },
+      "side_effects": ["pickle.dump", "json.dump", "logging.info"]
+    },
+    "src/models/train_catboost.py": {
+      "functions": [
+        "train_catboost_model(X_train: pd.DataFrame, y_train: pd.Series, X_val: pd.DataFrame, y_val: pd.Series, cat_features: List[int], params: Optional[Dict] = None) -> Any",
+        "save_catboost_bundle(model: Any, output_path: Path) -> None"
+      ],
+      "classes": [],
+      "imports": {
+        "local": [],
+        "external": ["catboost.CatBoostClassifier", "pandas", "numpy", "pathlib.Path", "typing.Dict", "typing.List", "typing.Optional", "typing.Any", "logging"]
+      },
+      "side_effects": ["model.save_model", "pickle.dump", "logging.info"]
+    },
+    "src/models/train_autogluon.py": {
+      "functions": [
+        "train_autogluon_predictor(train_data: pd.DataFrame, label: str, output_dir: Path, time_limit: int = 3600, presets: str = 'best_quality') -> Any",
+        "save_autogluon_predictor(predictor: Any, output_path: Path) -> None"
+      ],
+      "classes": [],
+      "imports": {
+        "local": [],
+        "external": ["autogluon.tabular.TabularPredictor", "pandas", "pathlib.Path", "typing.Any", "logging"]
+      },
+      "side_effects": ["predictor.save", "logging.info"]
+    },
+    "src/analytics/pattern_detectors.py": {
+      "functions": [
+        "prepare_doc_map(events: pd.DataFrame) -> Dict[str, List[str]]",
+        "compute_policy_metrics(events: pd.DataFrame, doc_map: Dict[str, List[str]]) -> pd.DataFrame",
+        "build_client_pattern_scores(events: pd.DataFrame) -> pd.DataFrame",
+        "infer_pattern_label(score_row: pd.Series) -> str",
+        "compute_periodicity_scores(gaps: np.ndarray) -> Dict[str, float]",
+        "compute_cardinality_scores(events: pd.DataFrame) -> Dict[str, float]"
+      ],
+      "classes": [
+        "PolicyRanking"
+      ],
+      "imports": {
+        "local": ["src.utils.logging_setup.configure_logging"],
+        "external": ["numpy", "pandas", "pathlib.Path", "typing.Dict", "typing.List", "logging", "dataclasses.dataclass"]
+      },
+      "side_effects": ["logging.info", "logging.debug"]
+    },
+    "src/analytics/calibration.py": {
+      "functions": [
+        "compute_brier_score(y_true: np.ndarray, y_prob: np.ndarray) -> float",
+        "compute_ece(y_true: np.ndarray, y_prob: np.ndarray, n_bins: int = 10) -> float",
+        "compute_mce(y_true: np.ndarray, y_prob: np.ndarray, n_bins: int = 10) -> float",
+        "build_reliability_bins(y_true: np.ndarray, y_prob: np.ndarray, n_bins: int = 10) -> pd.DataFrame",
+        "calibrate_probabilities(y_prob: np.ndarray, y_true: np.ndarray, method: str = 'isotonic') -> Any"
+      ],
+      "classes": [
+        "CalibrationMetrics"
+      ],
+      "imports": {
+        "local": [],
+        "external": ["numpy", "pandas", "sklearn.calibration.calibration_curve", "sklearn.calibration.CalibratedClassifierCV", "sklearn.isotonic.IsotonicRegression", "typing.Any", "dataclasses.dataclass", "logging"]
+      },
+      "side_effects": ["logging.info"]
+    },
+    "src/analytics/kpi_ranking.py": {
+      "functions": [
+        "compute_kpi_ranking(predictions_df: pd.DataFrame, client_profiles: pd.DataFrame) -> pd.DataFrame",
+        "rank_by_expected_loss(predictions_df: pd.DataFrame) -> pd.DataFrame",
+        "annotate_with_pattern_labels(ranking_df: pd.DataFrame, pattern_scores: pd.DataFrame) -> pd.DataFrame"
+      ],
+      "classes": [],
+      "imports": {
+        "local": ["src.analytics.pattern_detectors.infer_pattern_label"],
+        "external": ["pandas", "numpy", "typing", "logging"]
+      },
+      "side_effects": ["logging.info"]
+    },
+    "src/analytics/event_policy_metrics.py": {
+      "functions": [
+        "build_confusion_matrix(y_true: pd.Series, y_pred: pd.Series, policies: List[str]) -> pd.DataFrame",
+        "compute_uplift(baseline_conversion: float, policy_conversion: float) -> float",
+        "compute_per_policy_metrics(events: pd.DataFrame, predictions: pd.DataFrame, policies: List[str]) -> pd.DataFrame"
+      ],
+      "classes": [
+        "PolicyMetrics"
+      ],
+      "imports": {
+        "local": [],
+        "external": ["pandas", "numpy", "typing.List", "dataclasses.dataclass", "logging"]
+      },
+      "side_effects": ["logging.info"]
+    },
+    "src/analytics/month_coverage.py": {
+      "functions": [
+        "compute_month_coverage_metrics(events: pd.DataFrame, start_date: str, end_date: str) -> pd.DataFrame"
+      ],
+      "classes": [],
+      "imports": {
+        "local": [],
+        "external": ["pandas", "numpy", "logging"]
+      },
+      "side_effects": ["logging.info"]
+    },
+    "src/analytics/run_hdbscan.py": {
+      "functions": [
+        "run_hdbscan_clustering(embeddings: np.ndarray, min_cluster_size: int = 5, min_samples: int = 3) -> np.ndarray",
+        "compute_cluster_profiles(embeddings_df: pd.DataFrame, labels: np.ndarray, pattern_scores: pd.DataFrame) -> pd.DataFrame"
+      ],
+      "classes": [],
+      "imports": {
+        "local": [],
+        "external": ["hdbscan.HDBSCAN", "numpy", "pandas", "typing", "logging"]
+      },
+      "side_effects": ["logging.info"]
+    },
+    "src/analytics/cluster_profile.py": {
+      "functions": [
+        "aggregate_cluster_statistics(cluster_df: pd.DataFrame, metrics: List[str]) -> Dict[str, float]",
+        "generate_cluster_labels(cluster_profiles: pd.DataFrame) -> pd.Series"
+      ],
+      "classes": [],
+      "imports": {
+        "local": [],
+        "external": ["pandas", "numpy", "typing.Dict", "typing.List", "logging"]
+      },
+      "side_effects": ["logging.debug"]
+    },
+    "src/analytics/make_client_embeddings.py": {
+      "functions": [
+        "compute_client_embeddings(pattern_scores: pd.DataFrame, feature_cols: List[str]) -> pd.DataFrame",
+        "normalize_embeddings(embeddings: np.ndarray) -> np.ndarray"
+      ],
+      "classes": [],
+      "imports": {
+        "local": [],
+        "external": ["pandas", "numpy", "sklearn.preprocessing.StandardScaler", "typing.List", "logging"]
+      },
+      "side_effects": ["logging.info"]
+    },
+    "src/analytics/event_policy_classifier.py": {
+      "functions": [
+        "train_policy_classifier(features: pd.DataFrame, labels: pd.Series, output_path: Path) -> Any",
+        "predict_event_policies(model: Any, features: pd.DataFrame) -> pd.DataFrame"
+      ],
+      "classes": [],
+      "imports": {
+        "local": [],
+        "external": ["pandas", "numpy", "sklearn.ensemble.RandomForestClassifier", "pathlib.Path", "typing.Any", "pickle", "logging"]
+      },
+      "side_effects": ["pickle.dump", "pickle.load", "logging.info"]
+    },
+    "src/analytics/embedding_viz.py": {
+      "functions": [
+        "reduce_to_2d(embeddings: np.ndarray, method: str = 'umap') -> np.ndarray",
+        "plot_embedding_scatter(coords: np.ndarray, labels: np.ndarray, output_path: Path) -> None"
+      ],
+      "classes": [],
+      "imports": {
+        "local": [],
+        "external": ["numpy", "umap.UMAP", "sklearn.decomposition.PCA", "plotly.graph_objects", "pathlib.Path", "logging"]
+      },
+      "side_effects": ["fig.write_html", "logging.info"]
+    },
+    "src/analytics/rules_backtest.py": {
+      "functions": [
+        "backtest_rule_policy(events: pd.DataFrame, rule_fn: Callable, cutoff_dates: List[str]) -> pd.DataFrame",
+        "compare_rule_vs_model(rule_results: pd.DataFrame, model_results: pd.DataFrame) -> Dict[str, float]"
+      ],
+      "classes": [],
+      "imports": {
+        "local": [],
+        "external": ["pandas", "numpy", "typing.Callable", "typing.List", "typing.Dict", "logging"]
+      },
+      "side_effects": ["logging.info"]
+    },
+    "src/analytics/make_pattern_table.py": {
+      "functions": [
+        "generate_pattern_summary_table(pattern_scores: pd.DataFrame, events: pd.DataFrame) -> pd.DataFrame",
+        "export_pattern_table_html(table_df: pd.DataFrame, output_path: Path) -> None"
+      ],
+      "classes": [],
+      "imports": {
+        "local": ["src.analytics.pattern_detectors.infer_pattern_label"],
+        "external": ["pandas", "pathlib.Path", "logging"]
+      },
+      "side_effects": ["table_df.to_html", "logging.info"]
+    },
+    "src/pipeline/run_all.py": {
+      "functions": [
+        "parse_args() -> argparse.Namespace",
+        "main() -> None"
+      ],
+      "classes": [
+        "PipelineConfig",
+        "PipelineRunner"
+      ],
+      "imports": {
+        "local": [
+          "src.data.ingest_multi",
+          "src.features.build_events",
+          "src.features.make_features",
+          "src.features.make_labels",
+          "src.models.train",
+          "src.analytics.pattern_detectors",
+          "src.analytics.calibration",
+          "src.analytics.kpi_ranking",
+          "src.analytics.event_policy_metrics",
+          "src.analytics.month_coverage",
+          "src.analytics.run_hdbscan",
+          "src.analytics.cluster_profile",
+          "src.analytics.make_client_embeddings",
+          "src.report.make_report",
+          "src.utils.logging_setup"
+        ],
+        "external": ["argparse", "pathlib.Path", "dataclasses.dataclass", "logging", "pandas", "numpy"]
+      },
+      "side_effects": ["logging.info", "pd.read_parquet", "pd.DataFrame.to_parquet", "subprocess.run"]
+    },
+    "src/report/make_report.py": {
+      "functions": [
+        "generate_html_report(kpi_df: pd.DataFrame, pattern_df: pd.DataFrame, output_path: Path) -> None",
+        "render_kpi_table(kpi_df: pd.DataFrame) -> str",
+        "render_pattern_grid(pattern_df: pd.DataFrame) -> str"
+      ],
+      "classes": [],
+      "imports": {
+        "local": ["src.report.nlg_patterns.render_pattern_summary"],
+        "external": ["pandas", "pathlib.Path", "jinja2", "logging"]
+      },
+      "side_effects": ["output_path.write_text", "logging.info"]
+    },
+    "src/report/nlg_patterns.py": {
+      "functions": [
+        "render_pattern_summary(client: str, pattern_label: str, score_row: pd.Series) -> str",
+        "generate_claim_text(pattern_label: str) -> str",
+        "generate_evidence_bullets(score_row: pd.Series) -> List[str]"
+      ],
+      "classes": [],
+      "imports": {
+        "local": [],
+        "external": ["pandas", "typing.List", "logging"]
+      },
+      "side_effects": ["logging.debug"]
+    },
+    "src/utils/logging_setup.py": {
+      "functions": [
+        "configure_logging(log_dir: Path, level: int = logging.INFO) -> None",
+        "get_current_log_file() -> Path",
+        "log_timed(func: Callable) -> Callable"
+      ],
+      "classes": [
+        "JsonLinesFormatter"
+      ],
+      "imports": {
+        "local": [],
+        "external": ["logging", "pathlib.Path", "json", "datetime", "functools.wraps", "typing.Callable"]
+      },
+      "side_effects": ["logging.basicConfig", "file_handler.setFormatter", "Path.mkdir"]
+    },
+    "app/streamlit_app.py": {
+      "functions": [
+        "_data_root() -> Path",
+        "_p(*parts: str) -> Path",
+        "_load_parquet(path: Path) -> pd.DataFrame",
+        "_section_tracker(metrics: Dict[str, Any], stage_name: str) -> Callable",
+        "_record_dataframe(metrics: Dict[str, Any], name: str, df: Optional[pd.DataFrame]) -> None",
+        "_load_warning_log_records(max_items: int = 3) -> Dict[str, Any]",
+        "_load_champion_metadata() -> Dict[str, Any]",
+        "_load_json_log_tail(log_path: Path, max_lines: int = 100) -> List[Dict[str, Any]]",
+        "_render_developer_panel(metrics: Dict[str, Any]) -> None",
+        "load_curated_tables() -> Tuple[Dict[str, pd.DataFrame], List[str]]",
+        "enrich_features_for_models(...) -> pd.DataFrame",
+        "select_catboost_features(df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.Series, List[str], List[int]]",
+        "select_autogluon_features(df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.Series]",
+        "load_feature_repository() -> Tuple[pd.DataFrame, List[str], List[int], List[str]]",
+        "load_catboost_bundle() -> Tuple[Optional[Any], Optional[Any]]",
+        "load_autogluon_predictor() -> Optional[Any]",
+        "safe_calibrate(calibrator: Optional[Any], values: np.ndarray) -> np.ndarray",
+        "recommend_policy_docs(event_df: pd.DataFrame, policy: Optional[str], k: int) -> List[str]",
+        "top_docs_from_model(...) -> List[str]",
+        "build_event_comparison_table(...) -> pd.DataFrame",
+        "format_percentage(value: Optional[float]) -> str",
+        "format_decimal(value: Optional[float], digits: int = 2) -> str",
+        "safe_float(value: Any) -> float",
+        "compute_acf(values: np.ndarray, max_lag: int = 10) -> Tuple[np.ndarray, np.ndarray]",
+        "plot_histogram_with_markers(values: Iterable[float], title: str) -> go.Figure",
+        "plot_acf(values: np.ndarray) -> go.Figure",
+        "plot_periodicity_gauges(scores: pd.Series) -> Tuple[go.Figure, go.Figure, go.Figure]",
+        "plot_calendar_heatmap(events: pd.DataFrame) -> go.Figure",
+        "plot_policy_bars(scores: pd.Series) -> go.Figure",
+        "plot_cardinality_histogram(events: pd.DataFrame) -> go.Figure",
+        "plot_frequency_bar(series: pd.Series, title: str, color: str = '#B6992D') -> go.Figure",
+        "derive_macro_tipo(items: pd.DataFrame) -> pd.Series",
+        "run_holdout_validation(cliente: str) -> Optional[float]",
+        "render_data_explorer_page(...) -> None",
+        "render_pattern_card(...) -> None",
+        "main() -> None"
+      ],
+      "classes": [],
+      "imports": {
+        "local": [
+          "app.page_components.clusters.render_clusters_page",
+          "app.page_components.kpi_dashboard.render_kpi_dashboard_page",
+          "app.page_components.pattern_card_v2.render_pattern_card_v2",
+          "app.page_components.policy_iq.render_policy_iq",
+          "src.analytics.pattern_detectors.POLICY_NAMES",
+          "src.analytics.pattern_detectors.infer_pattern_label",
+          "src.report.nlg_patterns.render_pattern_summary",
+          "src.utils.logging_setup.get_current_log_file",
+          "src.utils.logging_setup.log_timed"
+        ],
+        "external": ["functools", "importlib", "json", "logging", "os", "pickle", "sys", "time", "pathlib.Path", "typing", "numpy", "pandas", "plotly.graph_objects", "streamlit"]
+      },
+      "side_effects": ["st.set_page_config", "st.session_state", "pd.read_parquet", "pickle.load", "st.cache_data", "st.cache_resource"]
+    },
+    "app/utils/export.py": {
+      "functions": [
+        "_find_column(df: pd.DataFrame, candidates: List[str]) -> Optional[str]",
+        "generate_event_explain_json(...) -> Dict[str, Any]",
+        "export_dataframe_to_csv(df: pd.DataFrame, filename: str = 'export.csv') -> bytes",
+        "generate_deeplink(...) -> str",
+        "restore_filters_from_deeplink() -> Dict[str, Any]",
+        "copy_to_clipboard_button(text: str, label: str = '📋 Copy Deep-Link') -> None"
+      ],
+      "classes": [],
+      "imports": {
+        "local": [],
+        "external": ["json", "pathlib.Path", "typing", "urllib.parse.urlencode", "pandas", "streamlit"]
+      },
+      "side_effects": ["st.button", "st.code"]
+    },
+    "app/page_components/pattern_card_v2.py": {
+      "functions": [
+        "plot_calendar_heatmap_12mo(events: pd.DataFrame) -> go.Figure",
+        "plot_cadence_histogram_enhanced(gaps: np.ndarray) -> go.Figure",
+        "plot_acf_enhanced(gaps: np.ndarray, max_lag: int = 10) -> go.Figure",
+        "plot_cardinality_with_metrics(events: pd.DataFrame, k_mode: float, k_entropy: float) -> Tuple[go.Figure, Dict[str, float]]",
+        "plot_policy_bars_enhanced(score_row: pd.Series, active_policies: Optional[List[str]] = None) -> go.Figure",
+        "render_claim_evidence_box(...) -> None",
+        "render_pattern_card_v2(...) -> None",
+        "apply_policy_boost(...) -> pd.DataFrame",
+        "render_explainability_panel(...) -> None"
+      ],
+      "classes": [],
+      "imports": {
+        "local": [
+          "src.analytics.pattern_detectors.POLICY_NAMES",
+          "src.report.nlg_patterns.render_pattern_summary",
+          "app.utils.export.generate_event_explain_json",
+          "app.utils.export.export_dataframe_to_csv",
+          "app.utils.export.generate_deeplink",
+          "app.utils.export.restore_filters_from_deeplink"
+        ],
+        "external": ["functools", "json", "pathlib.Path", "typing", "numpy", "pandas", "plotly.graph_objects", "streamlit", "scipy.stats.entropy"]
+      },
+      "side_effects": ["st.markdown", "st.plotly_chart", "st.download_button", "st.selectbox", "st.checkbox"]
+    },
+    "app/page_components/policy_iq.py": {
+      "functions": [
+        "load_policy_confusion_matrix(data_dir: Path) -> pd.DataFrame",
+        "load_policy_metrics(data_dir: Path) -> pd.DataFrame",
+        "load_per_event_policy_scores(data_dir: Path) -> pd.DataFrame",
+        "load_event_policy_predictions(data_dir: Path) -> pd.DataFrame",
+        "plot_policy_confusion_matrix(confusion_df: pd.DataFrame) -> go.Figure",
+        "render_uplift_table(metrics_df: pd.DataFrame) -> None",
+        "extract_dominant_policies(...) -> List[Dict]",
+        "render_policy_tile(policy_info: Dict, predictions_df: pd.DataFrame) -> None",
+        "render_policy_iq(data_dir: Path, hide_regmonth: bool = False) -> None"
+      ],
+      "classes": [],
+      "imports": {
+        "local": [
+          "app.utils.export.export_dataframe_to_csv",
+          "app.utils.export.generate_deeplink"
+        ],
+        "external": ["logging", "pathlib.Path", "typing", "pandas", "plotly.graph_objects", "streamlit"]
+      },
+      "side_effects": ["st.title", "st.tabs", "st.plotly_chart", "pd.read_parquet", "logging.warning"]
+    },
+    "app/page_components/clusters.py": {
+      "functions": [
+        "_ensure_list(value: Any) -> List[Any]",
+        "_format_cluster_label(cluster_label: int) -> str",
+        "_render_badge(label: str, value: str, *, color: str = '#1f77b4') -> str",
+        "_summarise_metrics(row: pd.Series, metrics: Sequence[str]) -> pd.DataFrame",
+        "_generate_automatic_label(...) -> str",
+        "_recompute_hdbscan(...) -> Tuple[pd.DataFrame, pd.DataFrame]",
+        "_compute_umap_projection(embeddings_df: pd.DataFrame) -> pd.DataFrame",
+        "_build_neighbors_table(neighbors_row: pd.Series, subject: str) -> pd.DataFrame",
+        "_rerun_app() -> None",
+        "render_clusters_page(...) -> None"
+      ],
+      "classes": [],
+      "imports": {
+        "local": [],
+        "external": ["json", "pathlib.Path", "typing", "numpy", "pandas", "plotly.express", "plotly.graph_objects", "streamlit"]
+      },
+      "side_effects": ["st.title", "st.slider", "st.button", "st.rerun", "pd.read_parquet"]
+    },
+    "app/page_components/kpi_dashboard.py": {
+      "functions": [
+        "_load_parquet_cached(path: Path) -> pd.DataFrame",
+        "_apply_filters(...) -> pd.DataFrame",
+        "_render_ranking_tab(kpi_df: pd.DataFrame, filtered_df: pd.DataFrame) -> None",
+        "_render_calibration_tab(...) -> None",
+        "_download_csv(df: pd.DataFrame, filename: str) -> None",
+        "render_kpi_dashboard_page(tables: Dict[str, pd.DataFrame], developer_metrics: Dict[str, Any]) -> None"
+      ],
+      "classes": [],
+      "imports": {
+        "local": [
+          "app.utils.export.generate_deeplink"
+        ],
+        "external": ["io", "pathlib.Path", "typing", "numpy", "pandas", "plotly.graph_objects", "streamlit"]
+      },
+      "side_effects": ["st.title", "st.tabs", "st.multiselect", "st.slider", "st.download_button", "pd.read_parquet"]
+    },
+    "scripts/make_mock_data.py": {
+      "functions": [
+        "generate_client_data(...) -> pd.DataFrame",
+        "generate_mock_dataset(...) -> pd.DataFrame",
+        "main() -> None"
+      ],
+      "classes": [],
+      "imports": {
+        "local": [],
+        "external": ["logging", "datetime.datetime", "datetime.timedelta", "pathlib.Path", "typing.List", "numpy", "pandas"]
+      },
+      "side_effects": ["pd.DataFrame.to_csv", "Path.mkdir", "logging.info"]
+    },
+    "tests/test_mock_isolation.py": {
+      "functions": [
+        "test_mock_isolation() -> None"
+      ],
+      "classes": [],
+      "imports": {
+        "local": [],
+        "external": ["pathlib.Path", "sys"]
+      },
+      "side_effects": ["assert", "print"]
+    }
+  },
+  "dependency_graph": {
+    "src.pipeline.run_all": [
+      "src.data.ingest_multi",
+      "src.features.build_events",
+      "src.features.make_features",
+      "src.features.make_labels",
+      "src.models.train",
+      "src.analytics.pattern_detectors",
+      "src.analytics.calibration",
+      "src.analytics.kpi_ranking",
+      "src.analytics.event_policy_metrics",
+      "src.analytics.month_coverage",
+      "src.analytics.run_hdbscan",
+      "src.analytics.cluster_profile",
+      "src.analytics.make_client_embeddings",
+      "src.report.make_report",
+      "src.utils.logging_setup"
+    ],
+    "src.data.ingest_multi": ["src.data.ingest"],
+    "src.models.train": ["src.models.train_catboost", "src.models.train_autogluon"],
+    "src.analytics.kpi_ranking": ["src.analytics.pattern_detectors"],
+    "src.analytics.pattern_detectors": ["src.utils.logging_setup"],
+    "src.analytics.make_pattern_table": ["src.analytics.pattern_detectors"],
+    "src.report.make_report": ["src.report.nlg_patterns"],
+    "app.streamlit_app": [
+      "app.page_components.clusters",
+      "app.page_components.kpi_dashboard",
+      "app.page_components.pattern_card_v2",
+      "app.page_components.policy_iq",
+      "src.analytics.pattern_detectors",
+      "src.report.nlg_patterns",
+      "src.utils.logging_setup"
+    ],
+    "app.page_components.pattern_card_v2": [
+      "src.analytics.pattern_detectors",
+      "src.report.nlg_patterns",
+      "app.utils.export"
+    ],
+    "app.page_components.policy_iq": ["app.utils.export"],
+    "app.page_components.kpi_dashboard": ["app.utils.export"]
+  },
+  "external_dependencies": {
+    "numpy": ">=1.24",
+    "pandas": ">=2.0",
+    "pyarrow": ">=14.0",
+    "scikit-learn": ">=1.4",
+    "streamlit": ">=1.35",
+    "plotly": ">=5.20",
+    "catboost": ">=1.2",
+    "autogluon.tabular": ">=1.1.0",
+    "rich": ">=13.0",
+    "lightgbm": ">=3.3.5",
+    "hdbscan": "optional",
+    "umap": "optional",
+    "jinja2": "optional"
+  },
+  "side_effect_summary": {
+    "parquet_reads": [
+      "app.streamlit_app._load_parquet",
+      "app.page_components.policy_iq.load_*",
+      "app.page_components.kpi_dashboard._load_parquet_cached",
+      "app.page_components.clusters.render_clusters_page"
+    ],
+    "parquet_writes": [
+      "src.data.ingest_multi.ingest_multiple_files",
+      "src.pipeline.run_all.PipelineRunner"
+    ],
+    "pickle_operations": [
+      "src.models.train_catboost.save_catboost_bundle",
+      "src.analytics.event_policy_classifier.train_policy_classifier",
+      "src.analytics.event_policy_classifier.predict_event_policies",
+      "app.streamlit_app.load_catboost_bundle",
+      "app.streamlit_app.load_autogluon_predictor"
+    ],
+    "file_writes": [
+      "src.report.make_report.generate_html_report",
+      "src.analytics.make_pattern_table.export_pattern_table_html",
+      "scripts.make_mock_data.generate_mock_dataset"
+    ],
+    "logging": [
+      "ALL_MODULES"
+    ],
+    "streamlit_state": [
+      "app.streamlit_app.main",
+      "app.page_components.*"
+    ]
+  }
+}

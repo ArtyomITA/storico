@@ -6,6 +6,7 @@ ENV/
 
 # Python cache and compiled files
 __pycache__/
+**/__pycache__/
 *.py[cod]
 *$py.class
 *.so
@@ -83,6 +84,9 @@ models/*.cbm
 models/*.pkl
 models/autogluon/
 reports/*.html
+
+# PROMPT summaries (documentation, not code)
+PROMPT*_SUMMARY.md
 
 # Temporary files
 *.tmp

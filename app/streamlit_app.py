@@ -24,11 +24,14 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from app.page_components.clusters import render_clusters_page
 from app.page_components.kpi_dashboard import render_kpi_dashboard_page
+from app.page_components.overview_wizard import render_overview_wizard_page
 from app.page_components.pattern_card_v2 import render_pattern_card_v2
+from app.page_components.pattern_summary import render_pattern_summary as render_pattern_summary_page # Renamed to avoid conflict
+from app.page_components.pipeline_overview import render_pipeline_overview_page
 from app.page_components.policy_iq import render_policy_iq
 
 from src.analytics.pattern_detectors import POLICY_NAMES, infer_pattern_label
-from src.report.nlg_patterns import render_pattern_summary
+from src.report.nlg_patterns import render_pattern_summary  # NLG text summary (different from page render)
 from src.utils.logging_setup import get_current_log_file, log_timed
 
 st.set_page_config(page_title="Pattern Card", page_icon="📊", layout="wide")
@@ -68,7 +71,7 @@ PERIODICITY_COLUMNS = [
     "periodicity_monthly",
 ]
 
-PAGE_OPTIONS = ("Pattern Card", "KPI Dashboard", "Data Explorer", "Clusters", "Policy IQ")
+PAGE_OPTIONS = ("Overview & Wizard", "Overview & Pipeline", "Pattern Card", "Pattern Summary", "KPI Dashboard", "Data Explorer", "Clusters", "Policy IQ") # Added Pattern Summary
 
 
 @st.cache_data(show_spinner=False)
@@ -1016,7 +1019,7 @@ def run_holdout_validation(cliente: str) -> Optional[float]:
         "src.analytics.rules_backtest",
         "src.analytics.validation",
         "src.analytics.holdout",
-        "src.analytics.prompt7",
+        "src.analytics.policy_metrics",
     ]
     for module_name in module_candidates:
         try:
@@ -1641,7 +1644,18 @@ def render_pattern_card(
 
 
 def main() -> None:
-    # PROMPT 9: Deep-link restore - parse query params at startup
+ # Mock mode badge in header
+    if st.session_state.get("mock_mode"):
+        st.markdown(
+            """
+            <div style="background-color: #FF6B6B; color: white; padding: 10px; border-radius: 5px; text-align: center; font-weight: bold; margin-bottom: 10px;">
+            🧪 DEMO DATA — Mock mode attivo
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+    
+ # Deep-link restore - parse query params at startup
     qp = st.query_params
     if "page" in qp and "selected_page" not in st.session_state:
         st.session_state["selected_page"] = qp["page"]
@@ -1656,7 +1670,7 @@ def main() -> None:
             help="Se attivo, i file caricati vengono salvati in data_mock/raw/uploads e gli output in data_mock/curated.",
         )
         
-        # PROMPT 8: Mock data generator button
+ # Mock data generator button
         if mock_mode:
             st.markdown("---")
             st.markdown("**Dataset Demo**")
@@ -1744,7 +1758,7 @@ def main() -> None:
     if notice_message:
         st.sidebar.success(notice_message)
 
-    # PROMPT 4 & 5: Operations tab + Quick Guide
+    # Operations tab + Quick Guide
     developer_mode = st.sidebar.checkbox("Developer mode", value=False)
     
     if developer_mode:
@@ -1945,7 +1959,53 @@ def main() -> None:
         st.error("Nessun cliente disponibile negli eventi.")
         st.stop()
 
-    page = st.sidebar.radio("Pagina", PAGE_OPTIONS, key="selected_page")
+ # Check if drill-down from Pattern Summary is active
+    if "drill_cliente" in st.session_state and "active_page" in st.session_state:
+        drill_cliente = st.session_state["drill_cliente"]
+        target_page = st.session_state["active_page"]
+        
+        # Validate drill cliente exists in current dataset
+        if drill_cliente in clients:
+            # Set selected_client and page for drill-down
+            st.session_state["selected_client"] = drill_cliente
+            
+            # Clear drill-down state (so it doesn't persist)
+            del st.session_state["drill_cliente"]
+            del st.session_state["active_page"]
+            
+            # Force page to Pattern Card
+            page = "Pattern Card"
+            st.sidebar.info(f"🔗 Drill-down attivo: Cliente **{drill_cliente}** dalla Pattern Summary")
+        else:
+            # Invalid drill cliente, clear state
+            st.warning(f"⚠️ Cliente drill-down '{drill_cliente}' non trovato nel dataset corrente.")
+            del st.session_state["drill_cliente"]
+            del st.session_state["active_page"]
+    else:
+        page = st.sidebar.radio("Pagina", PAGE_OPTIONS, key="selected_page")
+    
+ # Overview & Wizard page (homepage, CEO-friendly)
+    if page == "Overview & Wizard":
+        render_overview_wizard_page()
+        return
+    
+ # Overview & Pipeline page (developer-focused)
+    if page == "Overview & Pipeline":
+        render_pipeline_overview_page()
+        return
+    
+ # Pattern Summary page (drill-down to Pattern Card)
+    if page == "Pattern Summary":
+        @_section_tracker(developer_metrics, "UI.PatternSummary")
+        def _render_pattern_summary_wrapper() -> None:
+            render_pattern_summary_page(data_dir=_data_root())
+        
+        _render_pattern_summary_wrapper()
+        if developer_mode:
+            developer_metrics["logs"] = _load_warning_log_records()
+            developer_metrics["champion"] = _load_champion_metadata()
+            _render_developer_panel(developer_metrics)
+        return
 
     if "selected_client" not in st.session_state or st.session_state["selected_client"] not in clients:
         st.session_state["selected_client"] = clients[0]
@@ -1954,7 +2014,7 @@ def main() -> None:
     selected_client_value = st.sidebar.selectbox("Cliente", clients, key="selected_client")
     selected_client = str(selected_client_value)
     
-    # PROMPT 6: Toggle to hide regmonth policy
+ # Toggle to hide regmonth policy
     hide_regmonth = st.sidebar.checkbox(
         "Nascondi policy 'regmonth'",
         value=True,
@@ -1970,6 +2030,7 @@ def main() -> None:
             render_kpi_dashboard_page(
                 tables=tables,
                 developer_metrics=developer_metrics,
+                data_root_func=_data_root,
             )
 
         _render_kpi_dashboard()

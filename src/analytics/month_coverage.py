@@ -1,5 +1,5 @@
 """
-PROMPT 7: Month Full Payment Coverage metric.
+Month Full Payment Coverage metric.
 
 Separates "same registration month" (regmonth) from "paid all invoices in the month".
 Calculates per-event and per-client coverage metrics.

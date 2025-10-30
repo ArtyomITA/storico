@@ -14,6 +14,14 @@ from scipy.stats import entropy
 
 from src.analytics.pattern_detectors import POLICY_NAMES
 from src.report.nlg_patterns import render_pattern_summary
+from src.utils.sap_glossary import SAP_FI_AR_GLOSSARY, get_sap_term, get_sap_tooltip
+from src.utils.training_manager import (  
+    TrainingManager,
+    build_training_command,
+    get_catboost_artifacts,
+    get_autogluon_artifacts,
+    get_pattern_artifacts,
+)
 from app.utils.export import (
     export_dataframe_to_csv,
     generate_deeplink,
@@ -21,13 +29,282 @@ from app.utils.export import (
 )
 
 
+ # Policy labels con terminologia SAP FI-AR corretta
 POLICY_LABELS_IT: dict[str, str] = {
-    "same_period": "Stesso periodo",
-    "eomfirst": "Fine mese",
-    "largest": "Importo maggiore",
-    "fifo": "FIFO",
-    "lifo": "LIFO",
+    "weekly": "Cadenza Settimanale",
+    "biweekly": "Cadenza Quindicinale",
+    "monthly": "Cadenza Mensile",
+    "eomfirst": "Pagamento a Fine Mese",
+    "payall": "Pagamento Totale Fattura",
+    "regmonth": "Stesso Mese (Reg=Comp)",  # Mese Registrazione = Mese Compensazione
+    "same_period": "Stesso Periodo",
+    "largest": "Importo Maggiore",
+    "fifo": "FIFO (Prima Emessa, Prima Pagata)",
+    "lifo": "LIFO (Ultima Emessa, Prima Pagata)",
 }
+
+ # Tooltips SAP per policy (gergo interno → terminologia standard)
+POLICY_TOOLTIPS: dict[str, str] = {
+    "weekly": get_sap_tooltip("policy_settimanale"),
+    "biweekly": get_sap_tooltip("policy_quindicinale"),
+    "monthly": get_sap_tooltip("policy_mensile"),
+    "eomfirst": get_sap_tooltip("policy_fine_mese"),
+    "payall": get_sap_tooltip("policy_pagamento_totale"),
+    "regmonth": get_sap_tooltip("policy_regmonth"),
+    "same_period": "Compensa fatture dello stesso periodo contabile",
+    "largest": "Compensa per prima la fattura di importo maggiore",
+    "fifo": "Compensa fatture in ordine cronologico (First In, First Out)",
+    "lifo": "Compensa fatture in ordine inverso (Last In, First Out)",
+}
+
+
+# ============================================================================
+ # Policy Toggle Sidebar
+# ============================================================================
+
+ # Policy deterministiche disponibili (esclude periodicity policies)
+DETERMINISTIC_POLICIES: list[str] = [
+    "fifo",
+    "lifo",
+    "same_period",
+    "largest",
+    "smallest",
+    "eomfirst",
+    "quarter",
+    "seqblock",
+    "typeprio",
+    # "regmonth" excluded by default - handled separately with checkbox
+]
+
+
+def _render_policy_toggle_sidebar() -> List[str]:
+    """Render sidebar UI per toggle policy deterministiche.
+    
+    Returns:
+        List[str]: Lista policy attive (include regmonth se checkbox è ON)
+    """
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("### ⚙️ Filtro Policy Deterministiche")
+    st.sidebar.markdown(
+        "Seleziona quali policy mostrare nei grafici e nelle metriche. "
+        "Il toggle agisce **solo sulla visualizzazione** (dati a disco non modificati)."
+    )
+    
+    # Multiselect per policy standard (default: tutte attive)
+    selected_policies = st.sidebar.multiselect(
+        "Policy attive",
+        options=DETERMINISTIC_POLICIES,
+        default=DETERMINISTIC_POLICIES,
+        format_func=lambda p: POLICY_LABELS_IT.get(p, p),
+        help="Scegli quali policy deterministiche mostrare nei grafici e nelle tabelle",
+        key="policy_toggle_multiselect",
+    )
+    
+    # Checkbox separata per RegMonth (default: OFF)
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("**Policy Avanzata:**")
+    
+    show_regmonth = st.sidebar.checkbox(
+        POLICY_LABELS_IT.get("regmonth", "RegMonth"),
+        value=False,
+        key="policy_toggle_regmonth",
+        help=(
+            "⚠️ **RegMonth** favorisce documenti con **mese di registrazione = mese di compensazione**. "
+            "NON significa 'pagare tutte le fatture del mese'. "
+            "Confronta `MONTH(Data Registrazione) = MONTH(Data Compensazione)`, "
+            "senza verificare se il pagamento è tempestivo rispetto alla scadenza. "
+            "Policy nascosta di default perché può essere fuorviante."
+        ),
+    )
+    
+    # Build active policies list
+    active_policies = list(selected_policies)
+    if show_regmonth:
+        active_policies.append("regmonth")
+    
+    # Debug info (optional, for developer mode)
+    if st.sidebar.checkbox("🔍 Debug policy attive", value=False, key="debug_policy_toggle"):
+        st.sidebar.json({"active_policies": active_policies, "count": len(active_policies)})
+    
+    return active_policies
+
+
+# ============================================================================
+ # Training Actions Panel
+# ============================================================================
+
+def _render_training_actions_panel() -> None:
+    """Render riquadro Azioni con pulsanti training CatBoost/AutoGluon/Pattern."""
+    manager = TrainingManager()
+    
+    with st.expander("🚀 **Azioni Training & Pattern**", expanded=False):
+        st.markdown(
+            "Esegui training modelli predittivi (CatBoost, AutoGluon) o ricalcola Pattern/Policy. "
+            "Lo stato dell'ultima esecuzione è salvato e mostrato qui sotto."
+        )
+        
+        # 3 colonne: CatBoost, AutoGluon, Pattern
+        col_cat, col_auto, col_pattern = st.columns(3)
+        
+        # ===== CATBOOST =====
+        with col_cat:
+            st.markdown("### 🐱 CatBoost")
+            
+            catboost_status = manager.get_run_status("catboost")
+            artifacts_exist = manager.check_artifacts_exist("catboost")
+            
+            # Mostra stato ultimo run
+            if catboost_status:
+                _render_training_status_card(catboost_status, artifacts_exist)
+            else:
+                st.info("Nessun training CatBoost registrato.")
+            
+            # Parametri
+            use_gpu_cat = st.checkbox("Usa GPU", key="catboost_gpu", value=False)
+            k_values_cat = st.multiselect(
+                "Valori k per metriche",
+                options=[1, 2, 3, 5, 10],
+                default=[1, 2, 3, 5],
+                key="catboost_k",
+                help="Valori k per calcolare Precision@k, Hit Rate@k, NDCG@k",
+            )
+            
+            # Pulsante
+            button_label = "Riesegui CatBoost" if artifacts_exist else "Allena CatBoost"
+            if st.button(button_label, key="btn_catboost", type="primary"):
+                _start_training_catboost(manager, use_gpu_cat, k_values_cat)
+        
+        # ===== AUTOGLUON =====
+        with col_auto:
+            st.markdown("### 🤖 AutoGluon")
+            
+            autogluon_status = manager.get_run_status("autogluon")
+            artifacts_exist_ag = manager.check_artifacts_exist("autogluon")
+            
+            if autogluon_status:
+                _render_training_status_card(autogluon_status, artifacts_exist_ag)
+            else:
+                st.info("Nessun training AutoGluon registrato.")
+            
+            use_gpu_ag = st.checkbox("Usa GPU", key="autogluon_gpu", value=False)
+            k_values_ag = st.multiselect(
+                "Valori k per metriche",
+                options=[1, 2, 3, 5, 10],
+                default=[1, 2, 3, 5],
+                key="autogluon_k",
+                help="Valori k per calcolare Precision@k, Hit Rate@k, NDCG@k",
+            )
+            
+            button_label_ag = "Riesegui AutoGluon" if artifacts_exist_ag else "Allena AutoGluon"
+            if st.button(button_label_ag, key="btn_autogluon", type="primary"):
+                _start_training_autogluon(manager, use_gpu_ag, k_values_ag)
+        
+        # ===== PATTERN & POLICY =====
+        with col_pattern:
+            st.markdown("### 📐 Pattern/Policy")
+            
+            pattern_status = manager.get_run_status("pattern")
+            artifacts_exist_pat = manager.check_artifacts_exist("pattern")
+            
+            if pattern_status:
+                _render_training_status_card(pattern_status, artifacts_exist_pat)
+            else:
+                st.info("Nessun ricalcolo Pattern registrato.")
+            
+            st.markdown(
+                "Riesegue pattern detection e policy backtest: genera `per_client_patterns.parquet`, "
+                "`event_policy_confusion.parquet`, `event_policy_metrics.parquet`."
+            )
+            
+            button_label_pat = "Ricomputa Pattern" if artifacts_exist_pat else "Calcola Pattern"
+            if st.button(button_label_pat, key="btn_pattern", type="primary"):
+                _start_pattern_recompute(manager)
+
+
+def _render_training_status_card(run, artifacts_exist: bool) -> None:
+    """Render card with training status, timestamp, duration, artifacts."""
+    status_emoji = {
+        "not_started": "⚪",
+        "running": "🔄",
+        "completed": "✅",
+        "failed": "❌",
+    }
+    emoji = status_emoji.get(run.status, "❓")
+    
+    # Status
+    st.markdown(f"**Stato:** {emoji} `{run.status}`")
+    
+    # Timestamp
+    if run.completed_at:
+        timestamp_str = run.completed_at.strftime("%Y-%m-%d %H:%M:%S UTC")
+        st.markdown(f"**Completato:** {timestamp_str}")
+    elif run.started_at:
+        timestamp_str = run.started_at.strftime("%Y-%m-%d %H:%M:%S UTC")
+        st.markdown(f"**Avviato:** {timestamp_str}")
+    
+    # Duration
+    if run.duration_seconds:
+        duration_min = run.duration_seconds / 60.0
+        st.markdown(f"**Durata:** {duration_min:.1f} min")
+    
+    # Artifacts
+    if artifacts_exist and run.artifacts:
+        st.markdown(f"**Artefatti:** {len(run.artifacts)} file(s)")
+        with st.expander("Mostra path artefatti"):
+            for artifact in run.artifacts:
+                st.code(str(artifact), language="text")
+    elif run.status == "completed" and not artifacts_exist:
+        st.warning("⚠️ Artefatti non trovati")
+    
+    # Error
+    if run.error_message:
+        st.error(f"**Errore:** {run.error_message}")
+
+
+def _start_training_catboost(manager: TrainingManager, use_gpu: bool, k_values: List[int]) -> None:
+    """Avvia training CatBoost in background."""
+    st.info("🔄 Avvio training CatBoost in background...")
+    
+    command = build_training_command("catboost", use_gpu=use_gpu, k_values=k_values)
+    parameters = {"use_gpu": use_gpu, "k_values": k_values}
+    
+    try:
+        # Start async
+        process = manager.execute_training_async("catboost", command, parameters)
+        st.success(f"✅ Training CatBoost avviato (PID={process.pid}). Aggiorna la pagina per vedere lo stato.")
+        st.info("💡 Il training continua in background. Ricarica la pagina tra qualche minuto per vedere i risultati.")
+    except Exception as e:
+        st.error(f"❌ Errore avvio training CatBoost: {e}")
+
+
+def _start_training_autogluon(manager: TrainingManager, use_gpu: bool, k_values: List[int]) -> None:
+    """Avvia training AutoGluon in background."""
+    st.info("🔄 Avvio training AutoGluon in background...")
+    
+    command = build_training_command("autogluon", use_gpu=use_gpu, k_values=k_values)
+    parameters = {"use_gpu": use_gpu, "k_values": k_values}
+    
+    try:
+        process = manager.execute_training_async("autogluon", command, parameters)
+        st.success(f"✅ Training AutoGluon avviato (PID={process.pid}). Aggiorna la pagina per vedere lo stato.")
+        st.info("💡 Il training continua in background. Ricarica la pagina tra qualche minuto per vedere i risultati.")
+    except Exception as e:
+        st.error(f"❌ Errore avvio training AutoGluon: {e}")
+
+
+def _start_pattern_recompute(manager: TrainingManager) -> None:
+    """Avvia ricalcolo Pattern/Policy in background."""
+    st.info("🔄 Avvio ricalcolo Pattern/Policy in background...")
+    
+    command = build_training_command("pattern")
+    parameters = {}
+    
+    try:
+        process = manager.execute_training_async("pattern", command, parameters)
+        st.success(f"✅ Ricalcolo Pattern avviato (PID={process.pid}). Aggiorna la pagina per vedere lo stato.")
+        st.info("💡 Il processo continua in background. Ricarica la pagina tra qualche minuto per vedere i risultati.")
+    except Exception as e:
+        st.error(f"❌ Errore avvio ricalcolo Pattern: {e}")
 
 
 def plot_calendar_heatmap_12mo(events: pd.DataFrame) -> go.Figure:
@@ -92,7 +369,7 @@ def plot_calendar_heatmap_12mo(events: pd.DataFrame) -> go.Figure:
     
     fig = go.Figure(data=heatmap)
     fig.update_layout(
-        title="Calendario eventi (ultimi 12 mesi)",
+        title="Calendario Eventi di Compensazione (ultimi 12 mesi)", # Compensazione (SAP: Clearing)
         xaxis=dict(title="Anno-Mese"),
         yaxis=dict(title="Giorno settimana"),
         margin=dict(l=80, r=40, t=60, b=60),
@@ -143,8 +420,8 @@ def plot_cadence_histogram_enhanced(gaps: np.ndarray) -> go.Figure:
             )
     
     fig.update_layout(
-        title="Distribuzione gap tra eventi",
-        xaxis=dict(title="Giorni tra eventi"),
+        title="Distribuzione Cadenza Pagamenti", # Cadenza (SAP: Payment Frequency)
+        xaxis=dict(title="Giorni tra compensazioni"), # Compensazioni (SAP: Clearings)
         yaxis=dict(title="Frequenza"),
         margin=dict(l=60, r=40, t=60, b=60),
         height=300,
@@ -439,8 +716,14 @@ def render_pattern_card_v2(
     """
     st.title(f"📊 Scheda pattern — Cliente {selected_client}")
     
-    # PROMPT 6: Filter policy names if hide_regmonth is active
-    active_policies = [p for p in POLICY_NAMES if p != "regmonth" or not hide_regmonth]
+ # Riquadro Azioni per training CatBoost/AutoGluon/Pattern
+    _render_training_actions_panel()
+    
+ # Policy toggle UI in sidebar
+    active_policies = _render_policy_toggle_sidebar()
+    
+    # DEPRECATED 
+    # active_policies = [p for p in POLICY_NAMES if p != "regmonth" or not hide_regmonth]
     
     # Filter data for selected client
     client_events = events[events["cliente"] == selected_client].copy()
@@ -535,7 +818,7 @@ def render_pattern_card_v2(
     st.markdown("---")
     st.markdown("### 📏 Metriche aggiuntive")
     
-    # PROMPT 7: Add month coverage metrics
+ # Add month coverage metrics
     extra_cols = st.columns(6)
     extra_cols[0].metric("Concentrazione DOW", f"{float(score_row.get('dow_concentration', 0.0)):.2f}")
     extra_cols[1].metric("Concentrazione DOM", f"{float(score_row.get('dom_concentration', 0.0)):.2f}")

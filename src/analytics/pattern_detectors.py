@@ -799,7 +799,7 @@ def main() -> None:
     )
     cardinality_df = compute_cardinality_metrics(tables["events"])
     
-    # PROMPT 7: Compute month coverage metrics
+ # Compute month coverage metrics
     from src.analytics.month_coverage import compute_month_coverage_metrics
     LOGGER.info("Computing month full payment coverage metrics")
     coverage_df = compute_month_coverage_metrics(
@@ -816,7 +816,7 @@ def main() -> None:
         per_event_scores,
     )
     
-    # PROMPT 7: Merge coverage metrics into client_scores
+ # Merge coverage metrics into client_scores
     if not coverage_df.empty:
         client_scores = client_scores.merge(
             coverage_df[["cliente", "month_coverage_mean", "month_coverage_p95", "month_coverage_full_rate"]],

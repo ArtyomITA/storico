@@ -14,6 +14,175 @@ logger = logging.getLogger(__name__)
 
 
 # ============================================================================
+ # Policy Toggle (imported from pattern_card_v2)
+# ============================================================================
+
+ # Policy deterministiche disponibili (same as pattern_card_v2)
+DETERMINISTIC_POLICIES: List[str] = [
+    "fifo",
+    "lifo",
+    "same_period",
+    "largest",
+    "smallest",
+    "eomfirst",
+    "quarter",
+    "seqblock",
+    "typeprio",
+]
+
+ # Policy labels (imported from pattern_card_v2 for consistency)
+from app.page_components.pattern_card_v2 import POLICY_LABELS_IT
+
+
+# ============================================================================
+ # Policy Explanations (Business-Friendly)
+# ============================================================================
+
+POLICY_EXPLANATIONS: Dict[str, Dict[str, str]] = {
+    "fifo": {
+        "title": "🔹 FIFO — Prima Emessa, Prima Pagata",
+        "simple": "Il cliente paga sempre le fatture **più vecchie** per prime.",
+        "example": "**Esempio**: Cliente ha fatture del 10/01, 15/01, 20/01. Il 25/01 paga? → Sceglie quella del **10/01** (la più vecchia).",
+        "why": "**Quando usarla**: Clienti ordinati che seguono rigidamente l'ordine cronologico di ricezione.",
+        "technical": "**Formula**: `min(Data Documento)` tra fatture aperte al momento del pagamento."
+    },
+    "lifo": {
+        "title": "🔸 LIFO — Ultima Emessa, Prima Pagata",
+        "simple": "Il cliente paga sempre le fatture **più recenti** per prime.",
+        "example": "**Esempio**: Cliente ha fatture del 10/01, 15/01, 20/01. Il 25/01 paga? → Sceglie quella del **20/01** (la più recente).",
+        "why": "**Quando usarla**: Clienti che vogliono evitare ritardi sugli ordini recenti, o che ricevono solleciti recenti.",
+        "technical": "**Formula**: `max(Data Documento)` tra fatture aperte al momento del pagamento."
+    },
+    "largest": {
+        "title": "💰 Largest — Importo Maggiore Prima",
+        "simple": "Il cliente paga sempre le fatture con **importo più alto** per prime.",
+        "example": "**Esempio**: Cliente ha fatture da €100, €500, €200. Paga? → Sceglie quella da **€500**.",
+        "why": "**Quando usarla**: Clienti che vogliono ridurre l'esposizione totale velocemente, o che negoziano sconti su grandi importi.",
+        "technical": "**Formula**: `max(Imp. div. int.)` tra fatture aperte al momento del pagamento."
+    },
+    "smallest": {
+        "title": "🪙 Smallest — Importo Minore Prima",
+        "simple": "Il cliente paga sempre le fatture con **importo più basso** per prime.",
+        "example": "**Esempio**: Cliente ha fatture da €100, €500, €200. Paga? → Sceglie quella da **€100**.",
+        "why": "**Quando usarla**: Clienti che vogliono chiudere tante posizioni piccole per semplificare la contabilità.",
+        "technical": "**Formula**: `min(Imp. div. int.)` tra fatture aperte al momento del pagamento."
+    },
+    "same_period": {
+        "title": "📅 Same Period — Stesso Periodo Contabile",
+        "simple": "Il cliente paga fatture dello **stesso mese contabile** (Periodo Contabile = mese pagamento).",
+        "example": "**Esempio**: Cliente paga il 15/03. Ha fatture con Periodo 01, 02, 03. → Sceglie quelle con Periodo **03** (marzo).",
+        "why": "**Quando usarla**: Clienti con processi contabili rigidi che chiudono bilanci mensili.",
+        "technical": "**Formula**: `Periodo Contabile = MONTH(Data Compensazione)` tra fatture aperte."
+    },
+    "eomfirst": {
+        "title": "📆 EOM First — Fine Mese Prima",
+        "simple": "Il cliente paga fatture emesse a **fine mese** per prime (ultimi 5 giorni).",
+        "example": "**Esempio**: Cliente ha fatture del 10/01, 28/01, 15/02. Paga? → Sceglie quella del **28/01** (fine mese).",
+        "why": "**Quando usarla**: Clienti che ricevono solleciti batch a fine mese o che chiudono rendiconti periodici.",
+        "technical": "**Formula**: `day(Data Documento) >= 26` tra fatture aperte al momento del pagamento."
+    },
+    "quarter": {
+        "title": "📊 Quarter — Stesso Trimestre",
+        "simple": "Il cliente paga fatture dello **stesso trimestre** per prime (Q1, Q2, Q3, Q4).",
+        "example": "**Esempio**: Cliente paga ad aprile (Q2). Ha fatture Q1 (gen-mar) e Q2 (apr-giu). → Sceglie quelle **Q2**.",
+        "why": "**Quando usarla**: Clienti corporate con budget trimestrali o rendiconti quarterly.",
+        "technical": "**Formula**: `QUARTER(Data Documento) = QUARTER(Data Compensazione)` tra fatture aperte."
+    },
+    "seqblock": {
+        "title": "🔢 Sequential Block — Blocco Sequenziale",
+        "simple": "Il cliente paga fatture in **blocchi sequenziali** (es. tutte del 2023, poi tutte del 2024).",
+        "example": "**Esempio**: Cliente ha fatture 2022, 2023, 2024. Prima paga **tutte** del 2022, poi passa al 2023.",
+        "why": "**Quando usarla**: Clienti che chiudono periodi contabili in modo sequenziale (es. audit annuali).",
+        "technical": "**Formula**: `min(Esercizio)` tra fatture aperte, poi procede al successivo solo quando il precedente è vuoto."
+    },
+    "typeprio": {
+        "title": "📋 Type Priority — Priorità per Tipo Documento",
+        "simple": "Il cliente paga prima certi **tipi di documento** (es. fatture prima di note credito).",
+        "example": "**Esempio**: Cliente ha fatture (tipo 'RV') e note credito (tipo 'NC'). Paga? → Sceglie prima **tutte le RV**.",
+        "why": "**Quando usarla**: Clienti con workflow contabili che richiedono chiusura fatture standard prima di gestire storni.",
+        "technical": "**Formula**: `ORDER BY Tipo Documento (priorità fissa: RV > NC > altro)` tra fatture aperte."
+    },
+    "regmonth": {
+        "title": "⚠️ RegMonth — Mese Registrazione = Mese Pagamento",
+        "simple": "Il cliente paga fatture con **mese di registrazione = mese del pagamento** (indipendentemente dalla scadenza).",
+        "example": "**Esempio**: Cliente paga il 15/03. Ha fatture registrate a feb (02) e mar (03). → Sceglie quelle registrate a **marzo (03)**.",
+        "why": "**⚠️ Attenzione**: Questa regola NON verifica scadenze, può portare a pagamenti 'prematuri' se registrazione è recente ma scadenza lontana.",
+        "technical": "**Formula**: `MONTH(Data Registrazione) = MONTH(Data Compensazione)` tra fatture aperte."
+    }
+}
+
+
+def render_policy_explain_tile(policy_name: str) -> None:
+    """Render expander tile with business-friendly explanation for a policy."""
+    if policy_name not in POLICY_EXPLANATIONS:
+        st.warning(f"Spiegazione non disponibile per policy '{policy_name}'")
+        return
+    
+    expl = POLICY_EXPLANATIONS[policy_name]
+    
+    with st.expander(expl["title"], expanded=False):
+        st.markdown(f"**📘 Cosa fa**: {expl['simple']}")
+        st.markdown(expl["example"])
+        st.markdown(expl["why"])
+        
+        # Technical details in collapsed section
+        with st.expander("🔬 Dettagli Tecnici (per sviluppatori)", expanded=False):
+            st.code(expl["technical"], language="python")
+
+
+def _render_policy_toggle_sidebar_iq() -> List[str]:
+    """Render sidebar UI per toggle policy deterministiche (Policy IQ page).
+    
+    Returns:
+        List[str]: Lista policy attive (include regmonth se checkbox è ON)
+    """
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("### ⚙️ Filtro Policy Deterministiche")
+    st.sidebar.markdown(
+        "Seleziona quali policy mostrare nella confusion matrix e nei grafici. "
+        "Il toggle agisce **solo sulla visualizzazione** (dati a disco non modificati)."
+    )
+    
+    # Multiselect per policy standard (default: tutte attive)
+    selected_policies = st.sidebar.multiselect(
+        "Policy attive",
+        options=DETERMINISTIC_POLICIES,
+        default=DETERMINISTIC_POLICIES,
+        format_func=lambda p: POLICY_LABELS_IT.get(p, p),
+        help="Scegli quali policy deterministiche mostrare nei grafici e nelle tabelle",
+        key="policy_iq_toggle_multiselect",
+    )
+    
+    # Checkbox separata per RegMonth (default: OFF)
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("**Policy Avanzata:**")
+    
+    show_regmonth = st.sidebar.checkbox(
+        POLICY_LABELS_IT.get("regmonth", "RegMonth"),
+        value=False,
+        key="policy_iq_toggle_regmonth",
+        help=(
+            "⚠️ **RegMonth** favorisce documenti con **mese di registrazione = mese di compensazione**. "
+            "NON significa 'pagare tutte le fatture del mese'. "
+            "Confronta `MONTH(Data Registrazione) = MONTH(Data Compensazione)`, "
+            "senza verificare se il pagamento è tempestivo rispetto alla scadenza. "
+            "Policy nascosta di default perché può essere fuorviante."
+        ),
+    )
+    
+    # Build active policies list
+    active_policies = list(selected_policies)
+    if show_regmonth:
+        active_policies.append("regmonth")
+    
+    # Debug info (optional, for developer mode)
+    if st.sidebar.checkbox("🔍 Debug policy attive (IQ)", value=False, key="debug_policy_iq_toggle"):
+        st.sidebar.json({"active_policies": active_policies, "count": len(active_policies)})
+    
+    return active_policies
+
+
+# ============================================================================
 # Data Loading
 # ============================================================================
 
@@ -348,18 +517,21 @@ def render_policy_iq(data_dir: Path, hide_regmonth: bool = False) -> None:
     
     Args:
         data_dir: Path to data directory
-        hide_regmonth: If True, filter out regmonth policy from analysis
+        hide_regmonth: DEPRECATED (PROMPT 6) - replaced by PROMPT 7 policy toggle
     """
-    st.title("📊 Policy IQ — Analisi classificatore delle policy")
+    st.title("🎯 Policy IQ — Come pagano i tuoi clienti?")
     
     st.markdown(
         """
-        Questa pagina offre una panoramica sulle prestazioni del **classificatore di policy**:
-        - **Matrice di confusione**: confronta policy vere vs. predette.
-        - **Analisi uplift**: misura il guadagno rispetto al baseline FIFO per segmento.
-        - **Riquadri esplicativi**: mostra le policy dominanti per un cliente con esempi concreti.
+        Capire quale **regola di pagamento** usa ogni cliente aiuta a predire quali fatture pagheranno prima:
+        - **🎯 Matrice Accuratezza**: Confronta regola reale vs. quella predetta dal modello
+        - **📈 Miglioramento vs FIFO**: Quanto guadagni usando il modello invece di FIFO standard
+        - **💡 Spiegazioni Semplici**: Cosa significa ogni regola di pagamento con esempi concreti
         """
     )
+    
+ # Policy toggle UI in sidebar
+    active_policies = _render_policy_toggle_sidebar_iq()
     
     # Load data
     with st.spinner("Caricamento dati delle policy..."):
@@ -368,36 +540,57 @@ def render_policy_iq(data_dir: Path, hide_regmonth: bool = False) -> None:
         policy_scores_df = load_per_event_policy_scores(data_dir)
         predictions_df = load_event_policy_predictions(data_dir)
     
-    # PROMPT 6: Filter regmonth if requested
-    if hide_regmonth:
-        if not confusion_df.empty and "true_policy" in confusion_df.columns:
-            confusion_df = confusion_df[confusion_df["true_policy"] != "regmonth"].copy()
-            if "pred_policy" in confusion_df.columns:
-                confusion_df = confusion_df[confusion_df["pred_policy"] != "regmonth"].copy()
-        
-        if not metrics_df.empty and "policy" in metrics_df.columns:
-            metrics_df = metrics_df[metrics_df["policy"] != "regmonth"].copy()
-        
-        if not policy_scores_df.empty:
-            # Filter policy_regmonth column if exists
-            regmonth_cols = [c for c in policy_scores_df.columns if "regmonth" in c.lower()]
-            if regmonth_cols:
-                policy_scores_df = policy_scores_df.drop(columns=regmonth_cols)
+ # Filter data based on active_policies (replaces PROMPT 6 hide_regmonth)
+    if not confusion_df.empty and "true_policy" in confusion_df.columns:
+        confusion_df = confusion_df[
+            confusion_df["true_policy"].isin(active_policies)
+        ].copy()
+        if "pred_policy" in confusion_df.columns:
+            confusion_df = confusion_df[
+                confusion_df["pred_policy"].isin(active_policies)
+            ].copy()
+    
+    if not metrics_df.empty and "policy" in metrics_df.columns:
+        metrics_df = metrics_df[metrics_df["policy"].isin(active_policies)].copy()
+    
+    if not policy_scores_df.empty:
+        # Filter policy score columns based on active_policies
+        policy_score_cols = [c for c in policy_scores_df.columns if c.startswith("policy_")]
+        active_policy_cols = [
+            c for c in policy_score_cols
+            if any(p in c for p in active_policies)
+        ]
+        keep_cols = [c for c in policy_scores_df.columns if not c.startswith("policy_")] + active_policy_cols
+        policy_scores_df = policy_scores_df[keep_cols].copy()
+    
+    if not predictions_df.empty and "pred_policy" in predictions_df.columns:
+        predictions_df = predictions_df[
+            predictions_df["pred_policy"].isin(active_policies)
+        ].copy()
     
     if confusion_df.empty and metrics_df.empty and policy_scores_df.empty:
         st.error("Dati di policy non disponibili. Esegui prima la pipeline di analytics.")
         return
     
     # ========================================================================
-    # Section 1: Confusion Matrix
+    # Section 1: Confusion Matrix (Business-Friendly)
     # ========================================================================
-    st.header("1. Matrice di confusione")
-    st.markdown("Matrice normalizzata per riga che confronta policy reali e predette.")
+    st.header("🎯 1. Matrice Accuratezza Predizioni")
+    st.markdown(
+        """
+        **Cosa stai vedendo?** Ogni riga mostra quante volte il modello ha indovinato la regola di pagamento reale del cliente.
+        
+        - **Diagonale verde scuro**: Predizioni corrette ✅
+        - **Caselle fuori diagonale**: Confusione tra regole simili (es. FIFO vs LIFO)
+        
+        💡 **Obiettivo**: Diagonale >70% significa modello affidabile.
+        """
+    )
     
     fig_confusion = plot_policy_confusion_matrix(confusion_df)
-    st.plotly_chart(fig_confusion, width="stretch")
+    st.plotly_chart(fig_confusion, use_container_width=True)
     
-    # Accuracy metrics
+    # Accuracy metrics with business-friendly labels
     if not metrics_df.empty:
         global_metrics = metrics_df[metrics_df["segment_type"] == "global"]
         if not global_metrics.empty:
@@ -406,109 +599,237 @@ def render_policy_iq(data_dir: Path, hide_regmonth: bool = False) -> None:
             col1, col2, col3 = st.columns(3)
             with col1:
                 if "top1_accuracy" in row:
-                    st.metric("Accuratezza Top-1", f"{row['top1_accuracy']:.1%}")
+                    accuracy_val = row['top1_accuracy']
+                    accuracy_emoji = "🎯" if accuracy_val >= 0.7 else ("⚠️" if accuracy_val >= 0.5 else "❌")
+                    st.metric(
+                        f"{accuracy_emoji} Precisione Predizioni",
+                        f"{accuracy_val:.1%}",
+                        help="% di eventi in cui il modello ha indovinato la regola esatta (target: >70%)"
+                    )
             with col2:
                 if "top2_hit_rate" in row:
-                    st.metric("Copertura Top-2", f"{row['top2_hit_rate']:.1%}")
+                    hitrate_val = row['top2_hit_rate']
+                    st.metric(
+                        "📊 Copertura Top-2",
+                        f"{hitrate_val:.1%}",
+                        help="% di eventi in cui la regola vera è tra le prime 2 predette (utile per ambiguità FIFO/LIFO)"
+                    )
             with col3:
                 if "n_events" in row:
-                    st.metric("Eventi totali", f"{int(row['n_events'])}")
+                    st.metric(
+                        "📋 Eventi Analizzati",
+                        f"{int(row['n_events']):,}",
+                        help="Numero totale di pagamenti usati per calcolare la matrice"
+                    )
+    
+    # Export confusion matrix CSV
+    if not confusion_df.empty:
+        st.markdown("---")
+        csv_bytes = export_dataframe_to_csv(confusion_df)
+        st.download_button(
+            label="📥 Scarica Matrice CSV",
+            data=csv_bytes,
+            file_name="matrice_accuratezza_policy.csv",
+            mime="text/csv",
+            help="Esporta la matrice con percentuali per analisi in Excel"
+        )
     
     st.divider()
     
     # ========================================================================
-    # Section 2: Uplift Analysis
+    # Section 2: Uplift Analysis (Business-Friendly + Chart)
     # ========================================================================
-    st.header("2. Analisi uplift")
-    st.markdown("Confronta il **recall@k guidato dalla policy** con il baseline FIFO per segmento.")
+    st.header("📈 2. Miglioramento rispetto a FIFO Standard")
+    st.markdown(
+        """
+        **Domanda chiave**: Conviene usare il modello o basta applicare FIFO a tutti i clienti?
+        
+        - **Baseline FIFO**: Predici sempre "Prima Emessa, Prima Pagata" (strategia standard)
+        - **Modello Policy IQ**: Usa la regola specifica per cliente (FIFO, LIFO, Largest, etc.)
+        - **Uplift %**: Quanto migliora il recall@k con Policy IQ vs FIFO
+        
+        💡 **Interpretazione**:
+        - **+10%**: Policy IQ predice 10% in più di pagamenti corretti
+        - **0%**: Nessun vantaggio, FIFO funziona già bene
+        - **-5%**: Policy IQ peggiora (raro, indica overfitting)
+        """
+    )
     
+    # Render uplift table
     render_uplift_table(metrics_df)
     
-    st.divider()
-    
-    # ========================================================================
-    # Section 3: Explain Tiles for Dominant Policies
-    # ========================================================================
-    st.header("3. Riquadri esplicativi — Policy dominanti")
-    st.markdown("Esplora le policy predominanti per un cliente specifico con esempi.")
-    
-    # Client selector
-    if not policy_scores_df.empty:
-        available_clients = sorted(policy_scores_df["cliente"].unique())
+    # Add bar chart for visual comparison
+    if not metrics_df.empty:
+        st.markdown("#### 📊 Confronto Visivo: Baseline vs Policy IQ")
         
-        if available_clients:
-            selected_client_tile = st.selectbox(
-                "Seleziona cliente",
-                options=available_clients,
-                index=0,
-                key="policy_iq_client_selector"
-            )
+        # Prepare data for chart
+        chart_df = metrics_df.copy()
+        if "segment_type" in chart_df.columns and "baseline_recall" in chart_df.columns and "predicted_recall" in chart_df.columns:
+            # Focus on meaningful segments (global, k buckets)
+            chart_df = chart_df[chart_df["segment_type"].isin(["global", "k_bucket"])].copy()
             
-            # Extract dominant policies
-            dominant_policies = extract_dominant_policies(
-                policy_scores_df,
-                predictions_df,
-                str(selected_client_tile),
-                top_n=3
-            )
-            
-            if dominant_policies:
-                st.markdown(f"### Policy principali per **{selected_client_tile}**")
+            if not chart_df.empty:
+                import plotly.express as px
                 
-                for policy_info in dominant_policies:
-                    render_policy_tile(policy_info, predictions_df)
-            else:
-                st.info(f"Nessun dato policy disponibile per il cliente {selected_client_tile}.")
-        else:
-            st.warning("Nessun cliente trovato nei punteggi policy.")
-    else:
-        st.warning("Punteggi policy non disponibili.")
+                # Reshape for grouped bar chart
+                chart_long = chart_df.melt(
+                    id_vars=["segment_value"],
+                    value_vars=["baseline_recall", "predicted_recall"],
+                    var_name="Strategia",
+                    value_name="Recall@k"
+                )
+                
+                # Rename for clarity
+                chart_long["Strategia"] = chart_long["Strategia"].map({
+                    "baseline_recall": "FIFO Standard",
+                    "predicted_recall": "Policy IQ"
+                })
+                
+                fig_uplift = px.bar(
+                    chart_long,
+                    x="segment_value",
+                    y="Recall@k",
+                    color="Strategia",
+                    barmode="group",
+                    color_discrete_map={"FIFO Standard": "#94a3b8", "Policy IQ": "#10b981"},
+                    labels={"segment_value": "Segmento", "Recall@k": "Recall@k (%)"},
+                    title="Recall@k per Segmento: FIFO vs Policy IQ"
+                )
+                
+                fig_uplift.update_yaxis(tickformat=".1%")
+                fig_uplift.update_layout(height=400)
+                
+                st.plotly_chart(fig_uplift, use_container_width=True)
+                
+                # Key insight
+                global_row = metrics_df[metrics_df["segment_type"] == "global"]
+                if not global_row.empty and "uplift_relative" in global_row.columns:
+                    uplift_val = global_row.iloc[0]["uplift_relative"]
+                    if uplift_val > 5:
+                        st.success(f"✅ **Uplift globale: +{uplift_val:.1f}%** — Policy IQ migliora significativamente il recall!")
+                    elif uplift_val > 0:
+                        st.info(f"💡 **Uplift globale: +{uplift_val:.1f}%** — Policy IQ migliora leggermente, potrebbe non giustificare la complessità.")
+                    else:
+                        st.warning(f"⚠️ **Uplift globale: {uplift_val:.1f}%** — Policy IQ non migliora rispetto a FIFO. Verifica overfitting.")
     
-    # === S12: EXPORT & DEEP-LINK ===
+    # Export uplift CSV
+    if not metrics_df.empty:
+        st.markdown("---")
+        csv_bytes_uplift = export_dataframe_to_csv(metrics_df)
+        st.download_button(
+            label="📥 Scarica Uplift CSV",
+            data=csv_bytes_uplift,
+            file_name="policy_iq_uplift_metriche.csv",
+            mime="text/csv",
+            help="Esporta metriche uplift (baseline, predicted, delta) per segmento"
+        )
+    
     st.divider()
-    st.markdown("### 📤 Esporta & audit")
     
-    export_cols = st.columns(3)
+    # ========================================================================
+    # Section 3: Explain Tiles (Business-Friendly Policy Explanations)
+    # ========================================================================
+    st.header("💡 3. Cosa Significa Ogni Regola di Pagamento?")
+    st.markdown(
+        """
+        **Guida rapida**: Espandi una regola per capire quando e perché un cliente la usa.
+        
+        Ogni spiegazione include:
+        - 📘 **Descrizione semplice**: Cosa fa la regola in parole chiare
+        - 🧪 **Esempio concreto**: Caso d'uso con fatture reali
+        - 💼 **Quando usarla**: Scenari tipici per questo comportamento
+        - 🔬 **Dettagli tecnici**: Formula esatta (per sviluppatori)
+        """
+    )
     
-    with export_cols[0]:
-        # Export uplift table CSV
-        if not metrics_df.empty:
-            csv_bytes = export_dataframe_to_csv(metrics_df)
-            st.download_button(
-                label="📥 Scarica metriche uplift (CSV)",
-                data=csv_bytes,
-                file_name="policy_iq_uplift_metrics.csv",
-                mime="text/csv",
-            )
+    # Tab view for better organization
+    explain_tabs = st.tabs([
+        "📋 Tutte le Regole",
+        "🔍 Per Cliente Specifico"
+    ])
     
-    with export_cols[1]:
-        # Export confusion matrix CSV
-        if not confusion_df.empty:
-            csv_bytes = export_dataframe_to_csv(confusion_df)
-            st.download_button(
-                label="📥 Scarica matrice di confusione (CSV)",
-                data=csv_bytes,
-                file_name="policy_iq_confusion_matrix.csv",
-                mime="text/csv",
-            )
+    # Tab 1: All policies explained
+    with explain_tabs[0]:
+        st.markdown("### 📚 Dizionario Completo delle Regole")
+        
+        # Group policies by category
+        st.markdown("#### 🕐 Regole Temporali")
+        temporal_policies = ["fifo", "lifo", "same_period", "eomfirst", "quarter", "seqblock", "regmonth"]
+        for policy in temporal_policies:
+            if policy in active_policies:
+                render_policy_explain_tile(policy)
+        
+        st.markdown("#### 💰 Regole Basate su Importo")
+        amount_policies = ["largest", "smallest"]
+        for policy in amount_policies:
+            if policy in active_policies:
+                render_policy_explain_tile(policy)
+        
+        st.markdown("#### 📋 Regole Basate su Tipo Documento")
+        type_policies = ["typeprio"]
+        for policy in type_policies:
+            if policy in active_policies:
+                render_policy_explain_tile(policy)
     
-    with export_cols[2]:
-        # Deep-link
-        client_filter = ""
+    # Tab 2: Client-specific dominant policies
+    with explain_tabs[1]:
+        st.markdown("### 🎯 Policy Dominanti per Cliente")
+        st.markdown("Seleziona un cliente per vedere le sue 3 regole più frequenti con esempi dai suoi dati reali.")
+        
+        # Client selector
         if not policy_scores_df.empty:
             available_clients = sorted(policy_scores_df["cliente"].unique())
+            
             if available_clients:
-                client_filter = str(available_clients[0])  # Default to first client
-        
-        deeplink_url = generate_deeplink(
-            page="Policy IQ",
-            filters={"selected_client": client_filter},
-        )
-        if st.button("📋 Copia deep-link", key="deeplink_policyiq"):
-            st.code(deeplink_url, language=None)
-            st.caption("⚠️ Copia manualmente l'URL sopra (limitazione di Streamlit).")
+                selected_client_tile = st.selectbox(
+                    "Seleziona cliente",
+                    options=available_clients,
+                    index=0,
+                    key="policy_iq_client_selector"
+                )
+                
+                # Extract dominant policies
+                dominant_policies = extract_dominant_policies(
+                    policy_scores_df,
+                    predictions_df,
+                    str(selected_client_tile),
+                    top_n=3
+                )
+                
+                if dominant_policies:
+                    st.markdown(f"#### Top 3 regole per **{selected_client_tile}**:")
+                    
+                    for policy_info in dominant_policies:
+                        render_policy_tile(policy_info, predictions_df)
+                else:
+                    st.info(f"Nessun dato policy disponibile per il cliente {selected_client_tile}.")
+            else:
+                st.warning("Nessun cliente trovato nei punteggi policy.")
+        else:
+            st.warning("Punteggi policy non disponibili.")
+    
+    # ========================================================================
+    # Footer: Deep-link for Audit
+    # ========================================================================
+    st.divider()
+    st.markdown("### � Condividi Analisi")
+    
+    # Deep-link
+    client_filter = ""
+    if not policy_scores_df.empty:
+        available_clients = sorted(policy_scores_df["cliente"].unique())
+        if available_clients:
+            client_filter = str(available_clients[0])  # Default to first client
+    
+    deeplink_url = generate_deeplink(
+        page="Policy IQ",
+        filters={"selected_client": client_filter},
+    )
+    if st.button("📋 Genera Deep-Link", key="deeplink_policyiq"):
+        st.code(deeplink_url, language=None)
+        st.caption("⚠️ Copia manualmente l'URL sopra per condividere questa vista con colleghi.")
     
     # Footer
     st.divider()
-    st.caption("Policy IQ | Dati da event_policy_metrics, per_event_policy_scores, event_policy_predictions")
-    st.caption("Esporta & audit | I CSV rispettano i filtri correnti e il deep-link mantiene la selezione del cliente")
+    st.caption("🎯 Policy IQ | Dati: event_policy_metrics, per_event_policy_scores, event_policy_predictions")
+    st.caption("📥 CSV export disponibili in ogni sezione | 🔗 Deep-link mantiene filtri attivi")

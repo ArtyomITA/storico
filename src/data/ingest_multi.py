@@ -18,8 +18,10 @@ from src.data.ingest import (
     collect_raw_files,
     configure_logging,
     log_dataset_summary,
+    log_quality_report,
     normalise_dataframe,
     read_raw_file,
+    COL_MAP,
 )
 
 LOGGER = logging.getLogger(__name__)
@@ -86,6 +88,25 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
             "Otherwise the last occurrence is preserved."
         ),
     )
+    parser.add_argument(
+        "--use-extended-map",
+        action="store_true",
+        default=False,
+        help=(
+            "Use extended COL_MAP (19 columns) instead of legacy "
+            "RENAME_MAP (13 columns). Enables support for Società, Posizione, "
+            "Importo, Divisa funzionale, Data base pagamento, Cond. pagamento."
+        ),
+    )
+    parser.add_argument(
+        "--strict",
+        action="store_true",
+        default=False,
+        help=(
+            "Enforce presence of all RAW_COLUMNS (backward compatible mode). "
+            "If omitted, accepts any columns present in the selected mapping."
+        ),
+    )
 
     return parser.parse_args(argv)
 
@@ -138,14 +159,40 @@ def resolve_input_files(
     return files
 
 
-def load_and_normalise(files: Sequence[Path]) -> pd.DataFrame:
-    """Load, concatenate, and normalise raw SAP exports."""
+def load_and_normalise(
+    files: Sequence[Path],
+    use_extended_map: bool = False,
+    strict: bool = False,
+) -> tuple[pd.DataFrame, int]:
+    """Load, concatenate, and normalise raw SAP exports.
+    
+    Args:
+        files: List of CSV/XLSX files to process
+        use_extended_map: If True, use COL_MAP (PROMPT 1). If False, use RENAME_MAP (legacy).
+        strict: If True, enforce presence of RAW_COLUMNS. If False, accept any COL_MAP columns.
+    
+    Returns:
+        Tuple of (normalized_dataframe, original_row_count)
+    """
     frames: List[pd.DataFrame] = []
+    original_row_count = 0
+    
     for path in files:
-        frame = read_raw_file(path)
-        frames.append(normalise_dataframe(frame))
+        frame = read_raw_file(path, strict=strict)
+        original_row_count += len(frame)
+        normalised = normalise_dataframe(frame, use_extended_map=use_extended_map)
+        frames.append(normalised)
+        LOGGER.info("  %s: %d rows", path.name, len(normalised))
+    
     dataset = pd.concat(frames, ignore_index=True)
-    return dataset
+    
+    # Filter to only expected columns if using extended map
+    if use_extended_map:
+        expected_columns = list(COL_MAP.values())
+        available_columns = [col for col in expected_columns if col in dataset.columns]
+        dataset = dataset.loc[:, available_columns]
+    
+    return dataset, original_row_count
 
 
 def deduplicate_dataset(
@@ -257,9 +304,18 @@ def run(argv: Sequence[str] | None = None) -> None:
     files = resolve_input_files(args.input_patterns, project_root)
     LOGGER.info("Resolved %s input files", len(files))
 
-    dataset = load_and_normalise(files)
+    dataset, original_row_count = load_and_normalise(
+        files,
+        use_extended_map=args.use_extended_map,
+        strict=args.strict,
+    )
     dataset = deduplicate_dataset(dataset, args.dedupe_keys, keep_first=args.keep_first)
-    log_dataset_summary(dataset)
+    
+    # Use quality report if extended map, else legacy summary
+    if args.use_extended_map:
+        log_quality_report(dataset, original_row_count)
+    else:
+        log_dataset_summary(dataset)
 
     output_path = args.output_path
     if not output_path.is_absolute():
@@ -267,6 +323,7 @@ def run(argv: Sequence[str] | None = None) -> None:
     ensure_parent(output_path)
     dataset.to_parquet(output_path, compression="snappy", index=False)
     LOGGER.info("Wrote curated line items to %s", output_path)
+    LOGGER.info("Output schema: %d columns, %d rows", len(dataset.columns), len(dataset))
 
     if args.docmap_path:
         docmap_path = args.docmap_path

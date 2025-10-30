@@ -256,3 +256,48 @@ def copy_to_clipboard_button(text: str, label: str = "📋 Copy Deep-Link") -> N
         unsafe_allow_html=True,
     )
     st.caption("(Click button to copy URL to clipboard)")
+
+
+def save_export_to_disk(
+    content: bytes,
+    filename: str,
+    data_dir: Path,
+    is_mock: bool = False,
+) -> Path:
+    """Save export file to disk (for audit trail in mock mode).
+    
+    Args:
+        content: File content as bytes.
+        filename: Target filename (e.g., "export_20231015_123456.csv").
+        data_dir: Root data directory.
+        is_mock: If True, save to data_mock/exports/, else data/exports/.
+    
+    Returns:
+        Path to saved file.
+    """
+    if is_mock:
+        export_dir = data_dir.parent / "data_mock" / "exports"
+    else:
+        export_dir = data_dir / "exports"
+    
+    export_dir.mkdir(parents=True, exist_ok=True)
+    
+    output_path = export_dir / filename
+    output_path.write_bytes(content)
+    
+    return output_path
+
+
+def generate_export_filename(prefix: str, extension: str = "csv") -> str:
+    """Generate timestamped export filename.
+    
+    Args:
+        prefix: Filename prefix (e.g., "confusion_matrix").
+        extension: File extension without dot (e.g., "csv", "json").
+    
+    Returns:
+        Filename like "confusion_matrix_20231015_143022.csv".
+    """
+    from datetime import datetime
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    return f"{prefix}_{timestamp}.{extension}"

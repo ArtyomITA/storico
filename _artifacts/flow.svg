@@ -1,0 +1,246 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg width="1600" height="1400" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+  <defs>
+    <style>
+      .module-box { fill: #4A90E2; stroke: #2E5C8A; stroke-width: 2; rx: 8; }
+      .entry-point { fill: #E94B3C; stroke: #A33327; stroke-width: 2; rx: 8; }
+      .analytics { fill: #50C878; stroke: #3A9B5C; stroke-width: 2; rx: 8; }
+      .ui-module { fill: #F39C12; stroke: #C87F0A; stroke-width: 2; rx: 8; }
+      .utility { fill: #9B59B6; stroke: #7D3C98; stroke-width: 2; rx: 8; }
+      .module-text { fill: white; font-family: Arial, sans-serif; font-size: 12px; font-weight: bold; text-anchor: middle; }
+      .arrow { stroke: #34495E; stroke-width: 2; fill: none; marker-end: url(#arrowhead); }
+      .title-text { fill: #2C3E50; font-family: Arial, sans-serif; font-size: 24px; font-weight: bold; text-anchor: middle; }
+      .legend-text { fill: #34495E; font-family: Arial, sans-serif; font-size: 14px; }
+    </style>
+    <marker id="arrowhead" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto">
+      <polygon points="0 0, 10 3, 0 6" fill="#34495E" />
+    </marker>
+  </defs>
+
+  <!-- Title -->
+  <text x="800" y="40" class="title-text">Dependency Graph — Payment Pattern Analysis System</text>
+
+  <!-- Legend -->
+  <g transform="translate(50, 60)">
+    <rect x="0" y="0" width="30" height="20" class="entry-point"/>
+    <text x="40" y="15" class="legend-text">Entry Points</text>
+    
+    <rect x="150" y="0" width="30" height="20" class="module-box"/>
+    <text x="190" y="15" class="legend-text">Data/Model Modules</text>
+    
+    <rect x="350" y="0" width="30" height="20" class="analytics"/>
+    <text x="390" y="15" class="legend-text">Analytics</text>
+    
+    <rect x="500" y="0" width="30" height="20" class="ui-module"/>
+    <text x="540" y="15" class="legend-text">UI Components</text>
+    
+    <rect x="650" y="0" width="30" height="20" class="utility"/>
+    <text x="690" y="15" class="legend-text">Utilities</text>
+  </g>
+
+  <!-- LAYER 1: Entry Points -->
+  <g id="entry-points" transform="translate(0, 120)">
+    <rect x="100" y="0" width="200" height="60" class="entry-point"/>
+    <text x="200" y="35" class="module-text">src.pipeline.run_all</text>
+    
+    <rect x="700" y="0" width="200" height="60" class="entry-point"/>
+    <text x="800" y="35" class="module-text">app.streamlit_app</text>
+    
+    <rect x="1300" y="0" width="200" height="60" class="entry-point"/>
+    <text x="1400" y="35" class="module-text">scripts.make_mock_data</text>
+  </g>
+
+  <!-- LAYER 2: Data Ingestion -->
+  <g id="data-layer" transform="translate(0, 250)">
+    <rect x="50" y="0" width="180" height="50" class="module-box"/>
+    <text x="140" y="30" class="module-text">src.data.ingest_multi</text>
+    
+    <rect x="250" y="0" width="150" height="50" class="module-box"/>
+    <text x="325" y="30" class="module-text">src.data.ingest</text>
+  </g>
+
+  <!-- LAYER 3: Feature Engineering -->
+  <g id="features-layer" transform="translate(0, 360)">
+    <rect x="30" y="0" width="180" height="50" class="module-box"/>
+    <text x="120" y="30" class="module-text">src.features.build_events</text>
+    
+    <rect x="230" y="0" width="180" height="50" class="module-box"/>
+    <text x="320" y="30" class="module-text">src.features.make_features</text>
+    
+    <rect x="430" y="0" width="170" height="50" class="module-box"/>
+    <text x="515" y="30" class="module-text">src.features.make_labels</text>
+  </g>
+
+  <!-- LAYER 4: Models -->
+  <g id="models-layer" transform="translate(0, 470)">
+    <rect x="100" y="0" width="140" height="50" class="module-box"/>
+    <text x="170" y="30" class="module-text">src.models.train</text>
+    
+    <rect x="260" y="0" width="180" height="50" class="module-box"/>
+    <text x="350" y="30" class="module-text">src.models.train_catboost</text>
+    
+    <rect x="460" y="0" width="190" height="50" class="module-box"/>
+    <text x="555" y="30" class="module-text">src.models.train_autogluon</text>
+  </g>
+
+  <!-- LAYER 5: Analytics (Core) -->
+  <g id="analytics-core" transform="translate(0, 580)">
+    <rect x="50" y="0" width="200" height="50" class="analytics"/>
+    <text x="150" y="30" class="module-text">src.analytics.pattern_detectors</text>
+    
+    <rect x="270" y="0" width="170" height="50" class="analytics"/>
+    <text x="355" y="30" class="module-text">src.analytics.calibration</text>
+    
+    <rect x="460" y="0" width="170" height="50" class="analytics"/>
+    <text x="545" y="30" class="module-text">src.analytics.kpi_ranking</text>
+  </g>
+
+  <!-- LAYER 6: Analytics (Extended) -->
+  <g id="analytics-extended" transform="translate(0, 690)">
+    <rect x="30" y="0" width="200" height="50" class="analytics"/>
+    <text x="130" y="30" class="module-text">src.analytics.event_policy_metrics</text>
+    
+    <rect x="250" y="0" width="190" height="50" class="analytics"/>
+    <text x="345" y="30" class="module-text">src.analytics.month_coverage</text>
+    
+    <rect x="460" y="0" width="170" height="50" class="analytics"/>
+    <text x="545" y="30" class="module-text">src.analytics.run_hdbscan</text>
+    
+    <rect x="650" y="0" width="170" height="50" class="analytics"/>
+    <text x="735" y="30" class="module-text">src.analytics.cluster_profile</text>
+  </g>
+
+  <!-- LAYER 7: Analytics (Embedding & Viz) -->
+  <g id="analytics-viz" transform="translate(0, 800)">
+    <rect x="50" y="0" width="220" height="50" class="analytics"/>
+    <text x="160" y="30" class="module-text">src.analytics.make_client_embeddings</text>
+    
+    <rect x="290" y="0" width="200" height="50" class="analytics"/>
+    <text x="390" y="30" class="module-text">src.analytics.event_policy_classifier</text>
+    
+    <rect x="510" y="0" width="180" height="50" class="analytics"/>
+    <text x="600" y="30" class="module-text">src.analytics.embedding_viz</text>
+  </g>
+
+  <!-- LAYER 8: Report -->
+  <g id="report-layer" transform="translate(0, 910)">
+    <rect x="100" y="0" width="170" height="50" class="module-box"/>
+    <text x="185" y="30" class="module-text">src.report.make_report</text>
+    
+    <rect x="290" y="0" width="180" height="50" class="module-box"/>
+    <text x="380" y="30" class="module-text">src.report.nlg_patterns</text>
+  </g>
+
+  <!-- UI COMPONENTS -->
+  <g id="ui-components" transform="translate(800, 250)">
+    <rect x="0" y="0" width="220" height="50" class="ui-module"/>
+    <text x="110" y="30" class="module-text">app.page_components.pattern_card_v2</text>
+    
+    <rect x="0" y="70" width="220" height="50" class="ui-module"/>
+    <text x="110" y="100" class="module-text">app.page_components.kpi_dashboard</text>
+    
+    <rect x="0" y="140" width="200" height="50" class="ui-module"/>
+    <text x="100" y="170" class="module-text">app.page_components.clusters</text>
+    
+    <rect x="0" y="210" width="200" height="50" class="ui-module"/>
+    <text x="100" y="240" class="module-text">app.page_components.policy_iq</text>
+    
+    <rect x="0" y="280" width="160" height="50" class="ui-module"/>
+    <text x="80" y="310" class="module-text">app.utils.export</text>
+  </g>
+
+  <!-- UTILITIES -->
+  <g id="utilities" transform="translate(1100, 580)">
+    <rect x="0" y="0" width="180" height="50" class="utility"/>
+    <text x="90" y="30" class="module-text">src.utils.logging_setup</text>
+  </g>
+
+  <!-- ARROWS: run_all → data -->
+  <path d="M 200 180 L 140 250" class="arrow"/>
+  
+  <!-- ARROWS: ingest_multi → ingest -->
+  <path d="M 230 270 L 250 275" class="arrow"/>
+  
+  <!-- ARROWS: run_all → features -->
+  <path d="M 200 180 L 120 360" class="arrow"/>
+  <path d="M 200 180 L 320 360" class="arrow"/>
+  <path d="M 200 180 L 515 360" class="arrow"/>
+  
+  <!-- ARROWS: run_all → models -->
+  <path d="M 200 180 L 170 470" class="arrow"/>
+  
+  <!-- ARROWS: train → submodels -->
+  <path d="M 170 520 L 350 495" class="arrow"/>
+  <path d="M 170 520 L 555 495" class="arrow"/>
+  
+  <!-- ARROWS: run_all → analytics -->
+  <path d="M 200 180 L 150 580" class="arrow"/>
+  <path d="M 200 180 L 355 580" class="arrow"/>
+  <path d="M 200 180 L 545 580" class="arrow"/>
+  <path d="M 200 180 L 130 690" class="arrow"/>
+  <path d="M 200 180 L 345 690" class="arrow"/>
+  <path d="M 200 180 L 545 690" class="arrow"/>
+  <path d="M 200 180 L 160 800" class="arrow"/>
+  
+  <!-- ARROWS: kpi_ranking → pattern_detectors -->
+  <path d="M 545 630 L 250 610" class="arrow"/>
+  
+  <!-- ARROWS: pattern_detectors → logging -->
+  <path d="M 250 605 L 1100 605" class="arrow"/>
+  
+  <!-- ARROWS: run_all → report -->
+  <path d="M 200 180 L 185 910" class="arrow"/>
+  
+  <!-- ARROWS: make_report → nlg_patterns -->
+  <path d="M 270 935 L 290 935" class="arrow"/>
+  
+  <!-- ARROWS: streamlit_app → UI components -->
+  <path d="M 800 180 L 910 250" class="arrow"/>
+  <path d="M 800 180 L 910 320" class="arrow"/>
+  <path d="M 800 180 L 900 390" class="arrow"/>
+  <path d="M 800 180 L 900 460" class="arrow"/>
+  
+  <!-- ARROWS: streamlit_app → analytics -->
+  <path d="M 700 150 L 150 580" class="arrow"/>
+  
+  <!-- ARROWS: streamlit_app → nlg_patterns -->
+  <path d="M 700 150 L 380 910" class="arrow"/>
+  
+  <!-- ARROWS: streamlit_app → logging -->
+  <path d="M 900 150 L 1190 580" class="arrow"/>
+  
+  <!-- ARROWS: pattern_card_v2 → pattern_detectors -->
+  <path d="M 800 275 L 250 605" class="arrow"/>
+  
+  <!-- ARROWS: pattern_card_v2 → nlg_patterns -->
+  <path d="M 800 275 L 380 910" class="arrow"/>
+  
+  <!-- ARROWS: pattern_card_v2 → export -->
+  <path d="M 910 300 L 880 530" class="arrow"/>
+  
+  <!-- ARROWS: kpi_dashboard → export -->
+  <path d="M 910 370 L 880 530" class="arrow"/>
+  
+  <!-- ARROWS: policy_iq → export -->
+  <path d="M 900 510 L 880 530" class="arrow"/>
+
+  <!-- Summary Box -->
+  <g transform="translate(1100, 700)">
+    <rect x="0" y="0" width="450" height="240" fill="#ECF0F1" stroke="#BDC3C7" stroke-width="2" rx="8"/>
+    <text x="225" y="30" class="legend-text" text-anchor="middle" font-weight="bold" font-size="16">Flow Summary</text>
+    
+    <text x="10" y="55" class="legend-text" font-size="12">1. Data Ingestion: ingest_multi → ingest (SAP CSV)</text>
+    <text x="10" y="75" class="legend-text" font-size="12">2. Feature Engineering: build_events → make_features → make_labels</text>
+    <text x="10" y="95" class="legend-text" font-size="12">3. Model Training: train (CatBoost + AutoGluon)</text>
+    <text x="10" y="115" class="legend-text" font-size="12">4. Analytics: pattern_detectors, calibration, kpi_ranking</text>
+    <text x="10" y="135" class="legend-text" font-size="12">5. Extended Analytics: event_policy_metrics, month_coverage,</text>
+    <text x="10" y="152" class="legend-text" font-size="12">   run_hdbscan, cluster_profile, make_client_embeddings</text>
+    <text x="10" y="172" class="legend-text" font-size="12">6. Report Generation: make_report → nlg_patterns</text>
+    <text x="10" y="192" class="legend-text" font-size="12">7. Streamlit UI: 5 pages (Pattern Card, KPI Dashboard,</text>
+    <text x="10" y="209" class="legend-text" font-size="12">   Data Explorer, Clusters, Policy IQ)</text>
+    <text x="10" y="229" class="legend-text" font-size="12">8. Utils: logging_setup, export (deep-links)</text>
+  </g>
+
+  <!-- Module Count -->
+  <text x="1325" y="1000" class="legend-text" text-anchor="middle" font-size="14" font-weight="bold">Total Modules: 39 | Core Pipeline: 10 steps | UI Pages: 5</text>
+</svg>

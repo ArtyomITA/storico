@@ -11,6 +11,21 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
+ # Training manager imports
+from src.utils.training_manager import (
+    TrainingManager,
+    build_training_command,
+    get_hdbscan_artifacts,
+)
+
+# Export utilities
+from app.utils.export import (
+    export_dataframe_to_csv,
+    generate_deeplink,
+    generate_export_filename,
+    save_export_to_disk,
+)
+
 # Try to import HDBSCAN (optional dependency)
 try:
     import hdbscan  # type: ignore
@@ -52,27 +67,202 @@ CARDINALITY_METRICS: tuple[str, ...] = (
     "k_entropy",
 )
 METRIC_LABELS: dict[str, str] = {
-    "fifo_score": "FIFO",
-    "lifo_score": "LIFO",
-    "same_period_score": "Stesso periodo",
-    "largest_score": "Importo maggiore",
-    "smallest_score": "Importo minore",
-    "eomfirst_score": "Fine mese",
-    "regmonth_score": "Mese registrazione",
-    "quarter_score": "Trimestre",
-    "seqblock_score": "Sequenza documenti",
-    "typeprio_score": "Priorità tipo",
-    "periodicity_weekly": "Settimanale",
-    "periodicity_biweekly": "Bisettimanale",
-    "periodicity_monthly": "Mensile",
-    "dow_concentration": "Concentrazione DOW",
-    "dom_concentration": "Concentrazione DOM",
-    "P_k1": "k=1",
-    "P_k2": "k=2",
-    "P_kge3": "k≥3",
-    "k_mode": "k_mode",
-    "k_entropy": "k_entropy",
+    "fifo_score": "FIFO (Prima Emessa, Prima Pagata)",  
+    "lifo_score": "LIFO (Ultima Emessa, Prima Pagata)",  
+    "same_period_score": "Stesso Periodo",  
+    "largest_score": "Importo Maggiore",  
+    "smallest_score": "Importo Minore",  
+    "eomfirst_score": "Pagamento a Fine Mese",  
+    "regmonth_score": "Stesso Mese (Reg=Comp)",  
+    "quarter_score": "Cadenza Trimestrale",  
+    "seqblock_score": "Sequenza Documenti",  
+    "typeprio_score": "Priorità per Tipo",  
+    "periodicity_weekly": "Cadenza Settimanale",  
+    "periodicity_biweekly": "Cadenza Quindicinale",  
+    "periodicity_monthly": "Cadenza Mensile",  
+    "dow_concentration": "Concentrazione Giorno Settimana",  
+    "dom_concentration": "Concentrazione Giorno Mese",  
+    "P_k1": "Prob. k=1 Partita",  
+    "P_k2": "Prob. k=2 Partite",  
+    "P_kge3": "Prob. k≥3 Partite",  
+    "k_mode": "Cardinalità Modale",  
+    "k_entropy": "Entropia Cardinalità",  
 }
+
+
+# ============================================================================
+ # HDBSCAN Training Actions Panel
+# ============================================================================
+
+def _render_hdbscan_actions_panel() -> None:
+    """Render riquadro Azioni con pulsante HDBSCAN clustering."""
+    manager = TrainingManager()
+    
+    with st.expander("🔬 **Azioni Clustering HDBSCAN**", expanded=False):
+        st.markdown(
+            "**HDBSCAN** (Hierarchical Density-Based Spatial Clustering of Applications with Noise) "
+            "raggruppa clienti con comportamenti simili basandosi sulla **densità locale** degli embedding. "
+            "L'algoritmo identifica cluster di forma arbitraria e gestisce automaticamente il **rumore** "
+            "(clienti outlier non assegnati a nessun cluster). "
+            "Il parametro **stabilità** (stability) indica la robustezza del cluster rispetto a variazioni "
+            "nei parametri."
+        )
+        
+        st.markdown("---")
+        
+        # Stato ultimo run
+        hdbscan_status = manager.get_run_status("hdbscan")
+        artifacts_exist = manager.check_artifacts_exist("hdbscan")
+        
+        col_status, col_params = st.columns([1, 1])
+        
+        with col_status:
+            st.markdown("### 📊 Stato Clustering")
+            
+            if hdbscan_status:
+                _render_hdbscan_status_card(hdbscan_status, artifacts_exist)
+            else:
+                st.info("Nessun clustering HDBSCAN registrato.")
+        
+        with col_params:
+            st.markdown("### ⚙️ Parametri HDBSCAN")
+            
+ # Expanded parameter range for better control
+            min_cluster_size = st.slider(
+                "📏 Dimensione minima cluster",
+                min_value=2,
+                max_value=50,
+                value=5,
+                step=1,
+                key="hdbscan_min_cluster_size",
+                help=(
+                    "**min_cluster_size**: Numero minimo di clienti per formare un cluster.\n\n"
+                    "📘 **Business Interpretation**: Se hai 100 clienti e setti min_cluster_size=10, "
+                    "HDBSCAN creerà solo cluster con almeno 10 clienti. Clienti in gruppi più piccoli "
+                    "diventeranno 'noise' (outlier).\n\n"
+                    "📊 **Linee guida**:\n"
+                    "- **2-5**: Molti cluster piccoli, cattura nicchie rare (alta granularità)\n"
+                    "- **5-10**: Bilanciato per 50-100 clienti\n"
+                    "- **10-20**: Cluster robusti per 100-500 clienti\n"
+                    "- **>20**: Solo macro-segmenti dominanti (bassa granularità)\n\n"
+                    "⚠️ **Attenzione**: Valori troppo bassi (<3) possono produrre micro-cluster instabili."
+                ),
+            )
+            
+            min_samples = st.slider(
+                "🎯 Campioni minimi per densità",
+                min_value=1,
+                max_value=20,
+                value=3,
+                step=1,
+                key="hdbscan_min_samples",
+                help=(
+                    "**min_samples**: Numero minimo di vicini per considerare un punto 'core' (denso).\n\n"
+                    "📘 **Business Interpretation**: Se setti min_samples=5, un cliente diventa 'core' "
+                    "solo se ha almeno 5 clienti simili vicini nello spazio embedding. Punti non-core "
+                    "possono essere assegnati a cluster ma con minor certezza.\n\n"
+                    "📊 **Linee guida**:\n"
+                    "- **1**: Tutti i punti sono potenzialmente core (più inclusivo)\n"
+                    "- **2-5**: Bilanciato, richiede almeno qualche vicino simile\n"
+                    "- **5-10**: Conservativo, solo regioni molto dense\n"
+                    "- **>10**: Molto restrittivo, più noise\n\n"
+                    "💡 **Regola pratica**: Usa min_samples = min_cluster_size / 2 o 3 come punto di partenza."
+                ),
+            )
+            
+ # Metric selection
+            metric = st.selectbox(
+                "📐 Metrica distanza",
+                options=["euclidean", "manhattan", "cosine"],
+                index=2,  # Default cosine (best for embeddings)
+                key="hdbscan_metric",
+                help=(
+                    "**metric**: Funzione per calcolare distanza tra clienti negli embedding.\n\n"
+                    "📊 **Opzioni**:\n"
+                    "- **euclidean**: Distanza geometrica classica (√(Σ(x_i - y_i)²)). Buona per dati normalizzati.\n"
+                    "- **manhattan**: Somma differenze assolute (Σ|x_i - y_i|). Robusta a outlier.\n"
+                    "- **cosine**: Angolo tra vettori (1 - cos(θ)). **Migliore per embeddings** perché ignora magnitudo.\n\n"
+                    "💡 **Raccomandazione**: Usa **cosine** per embeddings neurali (default)."
+                ),
+            )
+            
+            st.markdown(
+                "**💡 Suggerimenti pratici:**\n"
+                "- **Dataset piccolo** (50-100 clienti): min_cluster_size=3-5, min_samples=2\n"
+                "- **Dataset medio** (100-300 clienti): min_cluster_size=5-10, min_samples=3-5\n"
+                "- **Dataset grande** (>300 clienti): min_cluster_size=10-20, min_samples=5-10\n"
+                "- Se vedi **troppo noise** (>30%): riduci min_cluster_size o min_samples\n"
+                "- Se vedi **troppi cluster** (>10): aumenta min_cluster_size"
+            )
+        
+        # Pulsante
+        button_label = "Riesegui HDBSCAN" if artifacts_exist else "Esegui HDBSCAN"
+        if st.button(button_label, key="btn_hdbscan", type="primary"):
+            _start_hdbscan_clustering(manager, min_cluster_size, min_samples, metric)
+
+
+def _render_hdbscan_status_card(run, artifacts_exist: bool) -> None:
+    """Render card with HDBSCAN clustering status."""
+    status_emoji = {
+        "not_started": "⚪",
+        "running": "🔄",
+        "completed": "✅",
+        "failed": "❌",
+    }
+    emoji = status_emoji.get(run.status, "❓")
+    
+    st.markdown(f"**Stato:** {emoji} `{run.status}`")
+    
+    if run.completed_at:
+        timestamp_str = run.completed_at.strftime("%Y-%m-%d %H:%M:%S UTC")
+        st.markdown(f"**Completato:** {timestamp_str}")
+    elif run.started_at:
+        timestamp_str = run.started_at.strftime("%Y-%m-%d %H:%M:%S UTC")
+        st.markdown(f"**Avviato:** {timestamp_str}")
+    
+    if run.duration_seconds:
+        duration_min = run.duration_seconds / 60.0
+        st.markdown(f"**Durata:** {duration_min:.1f} min")
+    
+    # Parametri
+    if run.parameters:
+        st.markdown(f"**Parametri:** `min_cluster_size={run.parameters.get('min_cluster_size')}`, "
+                   f"`min_samples={run.parameters.get('min_samples')}`")
+    
+    if artifacts_exist and run.artifacts:
+        st.markdown(f"**Artefatti:** {len(run.artifacts)} file(s)")
+        with st.expander("Mostra path artefatti"):
+            for artifact in run.artifacts:
+                st.code(str(artifact), language="text")
+    elif run.status == "completed" and not artifacts_exist:
+        st.warning("⚠️ Artefatti non trovati")
+    
+    if run.error_message:
+        st.error(f"**Errore:** {run.error_message}")
+
+
+def _start_hdbscan_clustering(manager: TrainingManager, min_cluster_size: int, min_samples: int, metric: str = "cosine") -> None:
+    """Avvia clustering HDBSCAN in background."""
+    st.info("🔄 Avvio clustering HDBSCAN in background...")
+    
+    command = build_training_command(
+        "hdbscan",
+        min_cluster_size=min_cluster_size,
+        min_samples=min_samples,
+        metric=metric,
+    )
+    parameters = {
+        "min_cluster_size": min_cluster_size,
+        "min_samples": min_samples,
+        "metric": metric,
+    }
+    
+    try:
+        process = manager.execute_training_async("hdbscan", command, parameters)
+        st.success(f"✅ Clustering HDBSCAN avviato (PID={process.pid}). Aggiorna la pagina per vedere lo stato.")
+        st.info("💡 Il clustering continua in background. Ricarica la pagina tra qualche minuto per vedere i risultati.")
+    except Exception as e:
+        st.error(f"❌ Errore avvio clustering HDBSCAN: {e}")
 
 
 def _ensure_list(value: Any) -> list[Any]:
@@ -207,22 +397,40 @@ def _recompute_hdbscan(
     return (labels, n_clusters, n_noise)
 
 
-def _compute_umap_projection(embeddings_df: pd.DataFrame) -> pd.DataFrame:
+def _compute_umap_projection(
+    embeddings_df: pd.DataFrame,
+    n_neighbors: int = 15,
+    min_dist: float = 0.1,
+    metric: str = "euclidean"
+) -> pd.DataFrame:
     """
-    Compute UMAP 2D projection from embeddings.
+    Compute UMAP 2D projection from embeddings with configurable parameters.
+    
+    Args:
+        embeddings_df: DataFrame with cliente column + embedding features
+        n_neighbors: Number of neighbors for manifold approximation (5-50, default 15)
+        min_dist: Minimum distance between points in 2D (0.0-1.0, default 0.1)
+        metric: Distance metric (euclidean/manhattan/cosine, default euclidean)
     
     Returns:
         DataFrame with columns: cliente, x, y
     """
     if not UMAP_AVAILABLE:
-        raise ImportError("umap-learn package required for UMAP projection")
+        raise ImportError("umap-learn package required for UMAP projection. Install with: pip install umap-learn")
     
     import umap  # type: ignore
     
     embed_cols = [col for col in embeddings_df.columns if col != "cliente"]
     X = embeddings_df[embed_cols].values
     
-    reducer = umap.UMAP(n_components=2, random_state=42, n_neighbors=15, min_dist=0.1)
+ # Configurable UMAP parameters
+    reducer = umap.UMAP(
+        n_components=2,
+        random_state=42,
+        n_neighbors=n_neighbors,
+        min_dist=min_dist,
+        metric=metric
+    )
     embedding_2d = reducer.fit_transform(X)
     
     result_df = pd.DataFrame({
@@ -271,6 +479,9 @@ def render_clusters_page(
     data_root_func: Any = None,  # Function to get data root (for mock mode)
 ) -> None:
     st.title("🔬 Cluster Explorer — UX avanzata")
+    
+ # Riquadro Azioni HDBSCAN
+    _render_hdbscan_actions_panel()
 
     embeddings = tables.get("client_embedding_2d", pd.DataFrame())
     clusters = tables.get("client_clusters", pd.DataFrame())
@@ -308,7 +519,7 @@ def render_clusters_page(
             help="Numero minimo di vicini per considerare un punto core"
         )
         
-        # Preview cluster counts
+ # Preview cluster counts with visual metrics
         if HDBSCAN_AVAILABLE and not embeddings_full.empty:
             if st.button("🔄 Anteprima clustering", key="preview_hdbscan"):
                 with st.spinner("Calcolo dell'anteprima in corso..."):
@@ -318,16 +529,104 @@ def render_clusters_page(
                             min_cluster_size,
                             min_samples
                         )
-                        st.success(f"✅ Anteprima: {n_clusters} cluster, {n_noise} punti rumorosi")
+                        
+ # Metrics cards
+                        total_clients = len(labels)
+                        n_clustered = total_clients - n_noise
+                        noise_pct = (n_noise / total_clients * 100) if total_clients > 0 else 0
+                        clustered_pct = (n_clustered / total_clients * 100) if total_clients > 0 else 0
+                        
+                        st.markdown("---")
+                        st.markdown("### 📊 Metriche Clustering Preview")
+                        
+                        col1, col2, col3 = st.columns(3)
+                        
+                        with col1:
+                            st.metric(
+                                "📊 Cluster Trovati",
+                                n_clusters,
+                                delta=None,
+                                help=(
+                                    f"Numero di cluster distinti identificati da HDBSCAN.\n\n"
+                                    f"Un cluster è un gruppo di clienti con comportamenti simili. "
+                                    f"Se vedi troppi cluster (>10), aumenta `min_cluster_size`."
+                                )
+                            )
+                        
+                        with col2:
+                            # Color code: noise >20% = bad (red), 10-20% = warning (orange), <10% = good (green)
+                            if noise_pct > 20:
+                                noise_delta = f"⚠️ Alto ({noise_pct:.1f}%)"
+                                noise_delta_color = "off"  # Streamlit shows red for negative delta
+                            elif noise_pct > 10:
+                                noise_delta = f"⚠️ Moderato ({noise_pct:.1f}%)"
+                                noise_delta_color = "off"
+                            else:
+                                noise_delta = f"✓ Basso ({noise_pct:.1f}%)"
+                                noise_delta_color = "normal"
+                            
+                            st.metric(
+                                "⚠️ Noise Points",
+                                n_noise,
+                                delta=noise_delta,
+                                delta_color=noise_delta_color,
+                                help=(
+                                    f"Clienti **outlier** non assegnati a nessun cluster (label = -1).\n\n"
+                                    f"**Interpretazione**:\n"
+                                    f"- <10% noise: Ottimo, la maggior parte dei clienti è ben clusterizzata\n"
+                                    f"- 10-20% noise: Accettabile, alcuni outlier sono normali\n"
+                                    f"- >20% noise: Critico, troppi outlier → riduci `min_cluster_size` o `min_samples`\n\n"
+                                    f"**Percentuale corrente**: {noise_pct:.1f}%"
+                                )
+                            )
+                        
+                        with col3:
+                            st.metric(
+                                "✅ Clienti Clustered",
+                                f"{clustered_pct:.1f}%",
+                                delta=f"{n_clustered}/{total_clients}",
+                                delta_color="normal",
+                                help=(
+                                    f"Percentuale di clienti assegnati a cluster validi (non-noise).\n\n"
+                                    f"**Obiettivo**: >80% dei clienti clustered per analisi significativa.\n\n"
+                                    f"**Valori correnti**:\n"
+                                    f"- Clustered: {n_clustered} clienti ({clustered_pct:.1f}%)\n"
+                                    f"- Noise: {n_noise} clienti ({noise_pct:.1f}%)"
+                                )
+                            )
+                        
+                        if noise_pct > 30:
+                            st.error(
+                                f"⚠️ **Attenzione**: Noise troppo alto ({noise_pct:.1f}%)!\n\n"
+                                f"**Suggerimenti**:\n"
+                                f"- Riduci `min_cluster_size` da {min_cluster_size} a {max(2, min_cluster_size // 2)}\n"
+                                f"- Riduci `min_samples` da {min_samples} a {max(1, min_samples // 2)}\n"
+                                f"- Prova metrica 'manhattan' invece di '{st.session_state.get('hdbscan_metric', 'cosine')}'"
+                            )
+                        elif noise_pct < 5 and n_clusters > 15:
+                            st.warning(
+                                f"💡 **Suggerimento**: Hai {n_clusters} cluster con solo {noise_pct:.1f}% noise.\n\n"
+                                f"Troppi cluster micro-frammentati? Prova ad aumentare `min_cluster_size` a {min_cluster_size + 5}."
+                            )
+                        else:
+                            st.success(f"✅ Configurazione bilanciata: {n_clusters} cluster, {noise_pct:.1f}% noise.")
+                        
+                        st.markdown("---")
                         
                         # Store in session state for Apply button
                         st.session_state["hdbscan_preview_labels"] = labels
                         st.session_state["hdbscan_preview_params"] = {
                             "min_cluster_size": min_cluster_size,
-                            "min_samples": min_samples
+                            "min_samples": min_samples,
+                            "metric": st.session_state.get("hdbscan_metric", "cosine")
+                        }
+                        st.session_state["hdbscan_preview_metrics"] = {
+                            "n_clusters": n_clusters,
+                            "n_noise": n_noise,
+                            "noise_pct": noise_pct
                         }
                     except Exception as e:
-                        st.error(f"Anteprima non riuscita: {e}")
+                        st.error(f"❌ Anteprima non riuscita: {e}")
             
             # Apply button to persist changes
             if "hdbscan_preview_labels" in st.session_state:
@@ -366,22 +665,120 @@ def render_clusters_page(
             st.info("Sono necessari gli embedding completi (client_embeddings.parquet) per ricalcolare.")
     
     # ========================================================================
-    # Selettore proiezione
+ # Selettore proiezione PCA/UMAP migliorato
     # ========================================================================
-    with st.sidebar.expander("📊 Metodo di proiezione", expanded=False):
-        projection_method = st.radio(
-            "Proiezione 2D",
-            options=["PCA (predefinito)", "UMAP"],
-            index=0,
-            key="projection_method_toggle",
-            help="Alterna tra PCA e UMAP per la visualizzazione 2D"
+    with st.sidebar.expander("📊 Metodo di proiezione 2D", expanded=False):
+        st.markdown(
+            "**Scegli algoritmo** per ridurre embedding ad alta dimensione (es. 768D) a 2D per visualizzazione:\n\n"
+            "- **PCA (Principal Component Analysis)**: Veloce, lineare, deterministico\n"
+            "- **UMAP (Uniform Manifold Approximation)**: Lento, non-lineare, preserva struttura locale\n\n"
+            "💡 **Quando usare**:\n"
+            "- **PCA**: Preview rapide, dataset >500 clienti, prima esplorazione\n"
+            "- **UMAP**: Analisi dettagliata, dataset <500 clienti, publication-quality viz"
         )
         
-        if projection_method == "UMAP" and UMAP_AVAILABLE and not embeddings_full.empty:
+        # Disable UMAP if not installed
+        if not UMAP_AVAILABLE:
+            st.warning(
+                "⚠️ **UMAP non disponibile**\n\n"
+                "UMAP non è installato. Puoi usare solo PCA.\n\n"
+                "**Per installare UMAP**:\n"
+                "```bash\n"
+                "pip install umap-learn\n"
+                "```\n\n"
+                "UMAP offre visualizzazioni migliori preservando **struttura locale** dei dati, "
+                "ma richiede più tempo di calcolo."
+            )
+            umap_option_label = "UMAP (non installato)"
+            umap_disabled = True
+        else:
+            umap_option_label = "UMAP (qualità)"
+            umap_disabled = False
+        
+        # Radio button with conditional disable
+        if umap_disabled:
+            projection_method = st.radio(
+                "🎨 Algoritmo proiezione",
+                options=["PCA (veloce)"],
+                index=0,
+                key="projection_method_toggle",
+                help="UMAP disabilitato (non installato). Solo PCA disponibile."
+            )
+        else:
+            projection_method = st.radio(
+                "🎨 Algoritmo proiezione",
+                options=["PCA (veloce)", umap_option_label],
+                index=0,
+                key="projection_method_toggle",
+                help=(
+                    "**PCA vs UMAP**:\n\n"
+                    "| Criterio | PCA | UMAP |\n"
+                    "|----------|-----|------|\n"
+                    "| Velocità | ⚡ Veloce (~1s) | 🐢 Lento (~30s) |\n"
+                    "| Qualità | 📊 Buona (lineare) | 🎨 Eccellente (non-lineare) |\n"
+                    "| Deterministico | ✅ Sempre uguale | ❌ Varia con seed |\n"
+                    "| Preserva distanze globali | ✅ Sì | ❌ No |\n"
+                    "| Preserva struttura locale | ❌ No | ✅ Sì |\n\n"
+                    "💡 **Regola pratica**: Usa PCA per esplorazione rapida, UMAP per analisi finale."
+                )
+            )
+        
+        # UMAP parameters (only if UMAP selected and available)
+        if projection_method.startswith("UMAP") and UMAP_AVAILABLE and not embeddings_full.empty:
+            st.markdown("---")
+            st.markdown("### ⚙️ Parametri UMAP")
+            
+            n_neighbors = st.slider(
+                "🏘️ Vicini (n_neighbors)",
+                min_value=5,
+                max_value=50,
+                value=15,
+                step=5,
+                key="umap_n_neighbors",
+                help=(
+                    "**n_neighbors**: Numero di vicini per costruire grafo locale.\n\n"
+                    "📘 **Business**: Controlla quanto UMAP enfatizza struttura **locale vs globale**.\n\n"
+                    "- **5-10**: Focus su dettagli locali, molti micro-cluster\n"
+                    "- **15**: Bilanciato (default raccomandato)\n"
+                    "- **30-50**: Focus su struttura globale, cluster più grandi\n\n"
+                    "💡 **Regola**: Usa 15 come default, aumenta se vedi troppa frammentazione."
+                ),
+            )
+            
+            min_dist = st.slider(
+                "📏 Distanza minima (min_dist)",
+                min_value=0.0,
+                max_value=1.0,
+                value=0.1,
+                step=0.05,
+                key="umap_min_dist",
+                help=(
+                    "**min_dist**: Distanza minima tra punti nella proiezione 2D.\n\n"
+                    "📘 **Business**: Controlla quanto i punti possono \"compattarsi\".\n\n"
+                    "- **0.0**: Massima compattezza, cluster densi e separati (migliore per clustering)\n"
+                    "- **0.1**: Bilanciato (default raccomandato)\n"
+                    "- **0.5-1.0**: Punti più dispersi, topologia continua (migliore per viz)\n\n"
+                    "💡 **Regola**: Usa 0.1 per clustering, 0.3-0.5 per visualizzazione esplorativa."
+                ),
+            )
+            
+            umap_metric = st.selectbox(
+                "📐 Metrica UMAP",
+                options=["euclidean", "manhattan", "cosine"],
+                index=2,  # Default cosine
+                key="umap_metric",
+                help="Stessa logica della metrica HDBSCAN. **Cosine** raccomandato per embeddings.",
+            )
+            
             if st.button("🔄 Calcola UMAP", key="compute_umap"):
-                with st.spinner("Calcolo della proiezione UMAP in corso..."):
+                with st.spinner("Calcolo della proiezione UMAP in corso (può richiedere 30-60 sec)..."):
                     try:
-                        umap_df = _compute_umap_projection(embeddings_full)
+                        umap_df = _compute_umap_projection(
+                            embeddings_full,
+                            n_neighbors=n_neighbors,
+                            min_dist=min_dist,
+                            metric=umap_metric
+                        )
                         st.session_state["umap_projection"] = umap_df
                         st.success("✅ Proiezione UMAP generata!")
                     except Exception as e:
@@ -689,3 +1086,50 @@ def render_clusters_page(
                     )
                 st.write("**Distribuzione macro-tipologie**")
                 st.dataframe(pd.DataFrame(macro_records), width="stretch")
+    
+    # ========================================================================
+    # Export & Deep-link
+    # ========================================================================
+    st.divider()
+    st.markdown("### 📤 Esporta & Condividi")
+    
+    export_cols = st.columns(3)
+    
+    with export_cols[0]:
+        # Export cluster assignments CSV
+        if not clusters.empty:
+            csv_bytes = export_dataframe_to_csv(clusters, "client_clusters.csv")
+            st.download_button(
+                label="📥 Scarica Cluster CSV",
+                data=csv_bytes,
+                file_name=generate_export_filename("client_clusters", "csv"),
+                mime="text/csv",
+                help="Esporta assegnazioni cliente → cluster con label"
+            )
+    
+    with export_cols[1]:
+        # Export cluster summary CSV
+        if not summaries.empty:
+            csv_bytes_summary = export_dataframe_to_csv(summaries, "cluster_summary.csv")
+            st.download_button(
+                label="📥 Scarica Summary CSV",
+                data=csv_bytes_summary,
+                file_name=generate_export_filename("cluster_summary", "csv"),
+                mime="text/csv",
+                help="Esporta metriche aggregate per cluster"
+            )
+    
+    with export_cols[2]:
+        # Deep-link
+        deeplink_url = generate_deeplink(
+            page="Clusters",
+            filters={"selected_client": selected_client},
+        )
+        if st.button("📋 Genera Deep-Link", key="deeplink_clusters"):
+            st.code(deeplink_url, language=None)
+            st.caption("⚠️ Copia manualmente l'URL per condividere questa vista.")
+    
+    # Footer
+    st.divider()
+    st.caption("🔬 Cluster Explorer | Dati: client_clusters, cluster_summary, client_embedding_2d")
+    st.caption("📥 CSV export disponibili | 🔗 Deep-link mantiene cliente selezionato")

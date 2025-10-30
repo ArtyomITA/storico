@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Sequence, Tuple
@@ -32,8 +33,17 @@ from src.utils.logging_setup import (
 )
 
 LOGGER = logging.getLogger(__name__)
-CURATED_DIR = Path("data/curated")
+
+
+def _get_data_root() -> Path:
+    """Get data root: data_mock/ if USE_MOCK=true, else data/."""
+    use_mock = os.getenv("USE_MOCK", "false").lower() == "true"
+    return Path("data_mock" if use_mock else "data")
+
+
+CURATED_DIR = _get_data_root() / "curated"
 MODELS_DIR = Path("models")
+REPORTS_DIR = Path("reports")
 CRITICAL_FEATURE_COLUMNS: Tuple[str, ...] = (
     "cliente",
     "event_key",
@@ -73,6 +83,8 @@ class PipelineConfig:
     make_kpi: bool
     make_calibration: bool
     make_policy_metrics: bool
+    step: Optional[str] # Single step execution
+    skip_validation: bool # Skip pre-training checks
 
 
 def parse_args(argv: Sequence[str] | None = None) -> PipelineConfig:
@@ -154,6 +166,24 @@ def parse_args(argv: Sequence[str] | None = None) -> PipelineConfig:
         action="store_true",
         help="Compute policy classifier metrics (confusion matrix, accuracy, uplift) on events.",
     )
+    
+ # Individual step flags for orchestrator
+    parser.add_argument(
+        "--step",
+        choices=[
+            "ingest", "events", "labels", "features", "validate",
+            "train", "patterns", "rules", "table", "reports",
+            "embeddings", "projection", "hdbscan", "clusters",
+            "kpi", "calibration", "policy"
+        ],
+        help="Run only a specific pipeline step (skip others).",
+    )
+    parser.add_argument(
+        "--skip-validation",
+        action="store_true",
+        help="Skip pre-training validation checks (use with caution).",
+    )
+    
     parser.add_argument(
         "--verbose",
         action="store_true",
@@ -180,6 +210,8 @@ def parse_args(argv: Sequence[str] | None = None) -> PipelineConfig:
         make_kpi=args.make_kpi,
         make_calibration=args.make_calibration,
         make_policy_metrics=args.make_policy_metrics,
+        step=args.step,  
+        skip_validation=args.skip_validation,  
     )
 
 
@@ -191,37 +223,73 @@ class PipelineRunner:
         self.project_root = Path(__file__).resolve().parents[2]
 
     def run(self) -> None:
+ # Map step names to methods
+        step_registry: Dict[str, Tuple[str, Callable[[], object]]] = {
+            "ingest": ("Ingest raw datasets", self.run_ingestion),
+            "events": ("Build clearing events", self.run_build_events),
+            "labels": ("Generate training labels", self.run_make_labels),
+            "features": ("Engineer features & client profiles", self.run_make_features),
+            "validate": ("Validate curated datasets", self.run_pretraining_validations),
+            "train": ("Train model & update champion", self.run_training),
+            "patterns": ("Compute pattern detectors", self.run_pattern_detectors),
+            "rules": ("Backtest policy rules", self.run_rules_backtest),
+            "table": ("Assemble pattern table", self.run_pattern_table),
+            "reports": ("Render pattern card reports", self.run_pattern_reports),
+            "embeddings": ("Create client embeddings", self.run_make_embeddings),
+            "projection": ("Compute embedding projection", self.run_embedding_projection),
+            "hdbscan": ("Cluster embeddings with HDBSCAN", self.run_hdbscan),
+            "clusters": ("Summarise clusters", self.run_cluster_profiles),
+            "kpi": ("Compute ranking KPIs", self.run_kpi_ranking),
+            "calibration": ("Compute calibration diagnostics", self.run_calibration),
+            "policy": ("Compute policy classifier metrics", self.run_policy_metrics),
+        }
+        
+ # If --step specified, run only that step
+        if self.config.step:
+            if self.config.step not in step_registry:
+                raise ValueError(f"Unknown step: {self.config.step}")
+            name, callback = step_registry[self.config.step]
+            LOGGER.info(f"Running single step: {self.config.step}")
+            self._run_step(name, callback)
+            return
+        
+        # Full pipeline execution
         steps: List[Tuple[str, Callable[[], object]]] = [
-            ("Ingest raw datasets", self.run_ingestion),
-            ("Build clearing events", self.run_build_events),
-            ("Generate training labels", self.run_make_labels),
-            ("Engineer features & client profiles", self.run_make_features),
-            ("Validate curated datasets", self.run_pretraining_validations),
-            ("Train model & update champion", self.run_training),
-            ("Compute pattern detectors", self.run_pattern_detectors),
-            ("Backtest policy rules", self.run_rules_backtest),
-            ("Assemble pattern table", self.run_pattern_table),
-            ("Render pattern card reports", self.run_pattern_reports),
+            step_registry["ingest"],
+            step_registry["events"],
+            step_registry["labels"],
+            step_registry["features"],
         ]
+        
+        if not self.config.skip_validation:
+            steps.append(step_registry["validate"])
+        
+        steps.extend([
+            step_registry["train"],
+            step_registry["patterns"],
+            step_registry["rules"],
+            step_registry["table"],
+            step_registry["reports"],
+        ])
 
         if self.config.make_embeddings:
-            steps.append(("Create client embeddings", self.run_make_embeddings))
+            steps.append(step_registry["embeddings"])
 
-        steps.append(("Compute embedding projection", self.run_embedding_projection))
+        steps.append(step_registry["projection"])
 
         if self.config.run_hdbscan:
-            steps.append(("Cluster embeddings with HDBSCAN", self.run_hdbscan))
+            steps.append(step_registry["hdbscan"])
 
-        steps.append(("Summarise clusters", self.run_cluster_profiles))
+        steps.append(step_registry["clusters"])
 
         if self.config.make_kpi:
-            steps.append(("Compute ranking KPIs", self.run_kpi_ranking))
+            steps.append(step_registry["kpi"])
 
         if self.config.make_calibration:
-            steps.append(("Compute calibration diagnostics", self.run_calibration))
+            steps.append(step_registry["calibration"])
 
         if self.config.make_policy_metrics:
-            steps.append(("Compute policy classifier metrics", self.run_policy_metrics))
+            steps.append(step_registry["policy"])
 
         for name, callback in steps:
             self._run_step(name, callback)
@@ -236,6 +304,12 @@ class PipelineRunner:
 
     @log_timed("Ingest raw datasets")
     def run_ingestion(self) -> None:
+ # Idempotent - check if line_items already exists
+        output_path = self.project_root / CURATED_DIR / "line_items.parquet"
+        if output_path.exists():
+            LOGGER.info(f"Skipping ingest: {output_path} already exists")
+            return
+        
         argv: List[str] = []
         for pattern in self.config.input_patterns:
             argv.extend(["--input", pattern])
@@ -245,11 +319,34 @@ class PipelineRunner:
 
     @log_timed("Build clearing events")
     def run_build_events(self) -> None:
+ # Idempotent - check prerequisites and output
+        line_items_path = self.project_root / CURATED_DIR / "line_items.parquet"
+        if not line_items_path.exists():
+            LOGGER.warning(f"Prerequisite missing: {line_items_path}. Run 'ingest' step first.")
+            return
+        
+        events_path = self.project_root / CURATED_DIR / "events.parquet"
+        if events_path.exists():
+            LOGGER.info(f"Skipping events build: {events_path} already exists")
+            return
+        
         build_events.configure_logging()
         build_events.build_events_tables(self.project_root)
 
     @log_timed("Generate training labels")
     def run_make_labels(self) -> dict[str, int] | None:
+ # Idempotent - check prerequisites and output
+        events_path = self.project_root / CURATED_DIR / "events.parquet"
+        if not events_path.exists():
+            LOGGER.warning(f"Prerequisite missing: {events_path}. Run 'events' step first.")
+            return None
+        
+        output_path = self.project_root / CURATED_DIR / "train_pointwise.parquet"
+        if output_path.exists():
+            LOGGER.info(f"Skipping labels: {output_path} already exists")
+            df = pd.read_parquet(output_path)
+            return {"rows": len(df)}
+        
         make_labels.configure_logging()
         labelled = make_labels.build_pointwise_labels(self.project_root)
         if labelled.empty:
@@ -261,6 +358,18 @@ class PipelineRunner:
 
     @log_timed("Engineer features & client profiles")
     def run_make_features(self) -> dict[str, int] | None:
+ # Idempotent - check prerequisites and output
+        labels_path = self.project_root / CURATED_DIR / "train_pointwise.parquet"
+        if not labels_path.exists():
+            LOGGER.warning(f"Prerequisite missing: {labels_path}. Run 'labels' step first.")
+            return None
+        
+        output_path = self.project_root / CURATED_DIR / "train_features.parquet"
+        if output_path.exists():
+            LOGGER.info(f"Skipping features: {output_path} already exists")
+            df = pd.read_parquet(output_path)
+            return {"rows": len(df)}
+        
         make_features.configure_logging()
         datasets = make_features.load_curated_datasets(self.project_root)
         client_profiles = make_features.compute_client_profiles(
@@ -273,7 +382,7 @@ class PipelineRunner:
         )
         if feature_matrix.empty:
             LOGGER.warning("Feature matrix is empty; outputs not refreshed.")
-            return
+            return None
         make_features.save_feature_outputs(feature_matrix, client_profiles, self.project_root)
         make_features.run_random_forest_smoke_test(feature_matrix)
         return {"rows": len(feature_matrix)}
@@ -395,16 +504,52 @@ class PipelineRunner:
 
     @log_timed("Train model & update champion")
     def run_training(self) -> None:
+ # Idempotent - check prerequisites
+        features_path = self.project_root / CURATED_DIR / "train_features.parquet"
+        if not features_path.exists():
+            LOGGER.warning(f"Prerequisite missing: {features_path}. Run 'features' step first.")
+            return
+        
+        # Check if model already trained (champion.json exists)
+        champion_path = self.project_root / MODELS_DIR / "champion.json"
+        if champion_path.exists():
+            LOGGER.info(f"Model already trained: {champion_path} exists. Use --force to retrain.")
+            return
+        
         argv = ["--model", self.config.model]
         train.run(argv)
 
     @log_timed("Compute pattern detectors")
     def run_pattern_detectors(self) -> None:
+ # Idempotent - check prerequisites
+        events_path = self.project_root / CURATED_DIR / "events.parquet"
+        if not events_path.exists():
+            LOGGER.warning(f"Prerequisite missing: {events_path}. Run 'events' step first.")
+            return
+        
+        # Check output
+        output_path = self.project_root / CURATED_DIR / "client_pattern_scores.parquet"
+        if output_path.exists():
+            LOGGER.info(f"Pattern detectors already built: {output_path} exists")
+            return
+        
         pattern_detectors.configure_logging()
         pattern_detectors.main()
 
     @log_timed("Backtest policy rules")
     def run_rules_backtest(self) -> None:
+ # Idempotent - check prerequisites
+        patterns_path = self.project_root / CURATED_DIR / "client_pattern_scores.parquet"
+        if not patterns_path.exists():
+            LOGGER.warning(f"Prerequisite missing: {patterns_path}. Run 'patterns' step first.")
+            return
+        
+        # Check output
+        output_path = self.project_root / CURATED_DIR / "client_rules_accuracy.parquet"
+        if output_path.exists():
+            LOGGER.info(f"Rules backtest already completed: {output_path} exists")
+            return
+        
         rules_backtest.configure_logging()
         rules_backtest.main()
 
@@ -415,6 +560,13 @@ class PipelineRunner:
         rules_path = curated_dir / "client_rules_accuracy.parquet"
         cat_metrics_path = curated_dir / "client_model_metrics_catboost.parquet"
         auto_metrics_path = curated_dir / "client_model_metrics_autogluon.parquet"
+
+ # Check output first (idempotent)
+        output_path = self.project_root / PATTERN_OUTPUT
+        if output_path.exists():
+            LOGGER.info(f"Pattern table already created: {output_path} exists")
+            df = pd.read_parquet(output_path)
+            return {"rows": len(df)}
 
         if not pattern_scores_path.exists():
             raise FileNotFoundError(
@@ -452,6 +604,19 @@ class PipelineRunner:
 
     @log_timed("Render pattern card reports")
     def run_pattern_reports(self) -> dict[str, int]:
+ # Idempotent - check prerequisites
+        table_path = self.project_root / PATTERN_OUTPUT
+        if not table_path.exists():
+            LOGGER.warning(f"Prerequisite missing: {table_path}. Run 'table' step first.")
+            return {"rows": 0}
+        
+        # Check output (reports directory with at least one PNG)
+        reports_dir = self.project_root / REPORTS_DIR
+        existing_reports = list(reports_dir.glob("pattern_*.png"))
+        if existing_reports:
+            LOGGER.info(f"Pattern reports already generated: {len(existing_reports)} files in {reports_dir}")
+            return {"rows": len(existing_reports)}
+        
         make_report.configure_logging()
         generated = make_report.generate_reports()
         LOGGER.info("Generated %s pattern card report(s).", len(generated))
@@ -461,6 +626,18 @@ class PipelineRunner:
 
     @log_timed("Create client embeddings")
     def run_make_embeddings(self) -> None:
+ # Idempotent - check prerequisites
+        features_path = self.project_root / CURATED_DIR / "train_features.parquet"
+        if not features_path.exists():
+            LOGGER.warning(f"Prerequisite missing: {features_path}. Run 'features' step first.")
+            return
+        
+        # Check output
+        output_path = self.project_root / CURATED_DIR / "client_embeddings.parquet"
+        if output_path.exists():
+            LOGGER.info(f"Client embeddings already created: {output_path} exists")
+            return
+        
         argv = []
         make_client_embeddings.configure_logging()
         make_client_embeddings.main(argv)
@@ -471,6 +648,13 @@ class PipelineRunner:
         if not embeddings_path.exists():
             LOGGER.info("Skipping embedding projection; %s not found.", embeddings_path)
             return
+        
+ # Idempotent - check output
+        output_path = self.project_root / CURATED_DIR / "client_embedding_2d.parquet"
+        if output_path.exists():
+            LOGGER.info(f"Embedding projection already computed: {output_path} exists")
+            return
+        
         argv = [
             "--embeddings",
             str(embeddings_path),
@@ -490,6 +674,13 @@ class PipelineRunner:
         if not embeddings_path.exists():
             LOGGER.info("Skipping HDBSCAN: embeddings parquet not found at %s", embeddings_path)
             return
+        
+ # Idempotent - check output
+        output_path = self.project_root / CURATED_DIR / "client_clusters.parquet"
+        if output_path.exists():
+            LOGGER.info(f"HDBSCAN clustering already computed: {output_path} exists")
+            return
+        
         argv = [
             "--embeddings",
             str(embeddings_path),
@@ -509,23 +700,66 @@ class PipelineRunner:
         if not clusters_path.exists():
             LOGGER.info("Skipping cluster summary; %s not available.", clusters_path)
             return
+        
+ # Idempotent - check output
+        output_path = self.project_root / CURATED_DIR / "cluster_summary.parquet"
+        if output_path.exists():
+            LOGGER.info(f"Cluster profiles already computed: {output_path} exists")
+            return
+        
         cluster_profile.configure_logging()
         cluster_profile.main()
 
     @log_timed("Compute ranking KPIs")
     def run_kpi_ranking(self) -> None:
+ # Idempotent - check prerequisites
+        champion_path = self.project_root / MODELS_DIR / "champion.json"
+        if not champion_path.exists():
+            LOGGER.warning(f"Prerequisite missing: {champion_path}. Run 'train' step first.")
+            return
+        
+        # Check output
+        output_path = self.project_root / CURATED_DIR / "kpi_ranking.parquet"
+        if output_path.exists():
+            LOGGER.info(f"KPI ranking already computed: {output_path} exists")
+            return
+        
         from src.analytics import kpi_ranking
 
         kpi_ranking.main()
 
     @log_timed("Compute calibration diagnostics")
     def run_calibration(self) -> None:
+ # Idempotent - check prerequisites
+        champion_path = self.project_root / MODELS_DIR / "champion.json"
+        if not champion_path.exists():
+            LOGGER.warning(f"Prerequisite missing: {champion_path}. Run 'train' step first.")
+            return
+        
+        # Check output
+        output_path = self.project_root / CURATED_DIR / "calibration_summary.parquet"
+        if output_path.exists():
+            LOGGER.info(f"Calibration diagnostics already computed: {output_path} exists")
+            return
+        
         from src.analytics import calibration
 
         calibration.main()
 
     @log_timed("Compute policy classifier metrics")
     def run_policy_metrics(self) -> None:
+ # Idempotent - check prerequisites
+        events_path = self.project_root / CURATED_DIR / "events.parquet"
+        if not events_path.exists():
+            LOGGER.warning(f"Prerequisite missing: {events_path}. Run 'events' step first.")
+            return
+        
+        # Check output
+        output_path = self.project_root / CURATED_DIR / "event_policy_metrics.parquet"
+        if output_path.exists():
+            LOGGER.info(f"Policy metrics already computed: {output_path} exists")
+            return
+        
         from src.analytics import event_policy_metrics
 
         event_policy_metrics.main()
