@@ -75,20 +75,39 @@ venv.bak/
 .DS_Store
 Thumbs.db
 
-# Project specific
+# Project specific - Generated outputs
 catboost_info/
+
+# Logs - All execution logs
+logs/
 logs/*.jsonl
+
+# Data - Raw and curated
 data/raw/*.csv
 data/raw/*.xlsx
+data/curated/
+data/curated/*.parquet
+data/curated/*.json
+data/curated/*.csv
+
+# Models - All trained models and artifacts
+models/
 models/*.cbm
 models/*.pkl
+models/*.json
 models/autogluon/
+
+# Reports - Generated HTML reports
+reports/
 reports/*.html
 
-# PROMPT summaries (documentation, not code)
-PROMPT*_SUMMARY.md
+# Artifacts - Documentation artifacts
+_artifacts/
+_artifacts/*.svg
+_artifacts/*.json
 
 # Temporary files
 *.tmp
 *.bak
 *.log
+README.prev.md
