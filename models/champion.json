@@ -1,8 +1,0 @@
-{
-  "model": "autogluon",
-  "trained_at": "2025-10-03T20:58:14.118257+00:00",
-  "metrics": {
-    "auc_pr": 1.0,
-    "match_rate": 1.0
-  }
-}

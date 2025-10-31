@@ -1,9 +1,0 @@
-{"timestamp": "2025-10-06T15:19:20.508Z", "level": "INFO", "logger": "__main__", "message": "Loaded champion model: autogluon"}
-{"timestamp": "2025-10-06T15:19:20.510Z", "level": "INFO", "logger": "__main__", "message": "Loading train_features from C:\\Users\\Administrator\\Desktop\\lavoro\\storico\\data\\curated\\train_features.parquet"}
-{"timestamp": "2025-10-06T15:19:20.572Z", "level": "INFO", "logger": "__main__", "message": "Loading events from C:\\Users\\Administrator\\Desktop\\lavoro\\storico\\data\\curated\\events.parquet"}
-{"timestamp": "2025-10-06T15:19:20.588Z", "level": "INFO", "logger": "__main__", "message": "Loading event_items from C:\\Users\\Administrator\\Desktop\\lavoro\\storico\\data\\curated\\event_items.parquet"}
-{"timestamp": "2025-10-06T15:19:20.596Z", "level": "INFO", "logger": "__main__", "message": "Loading pattern_scores from C:\\Users\\Administrator\\Desktop\\lavoro\\storico\\data\\curated\\client_pattern_scores.parquet"}
-{"timestamp": "2025-10-06T15:19:20.603Z", "level": "INFO", "logger": "__main__", "message": "Loading client_profiles from C:\\Users\\Administrator\\Desktop\\lavoro\\storico\\data\\curated\\client_profiles.parquet"}
-{"timestamp": "2025-10-06T15:19:21.018Z", "level": "INFO", "logger": "__main__", "message": "Using AutoGluon model 'LightGBMLarge' for SHAP computation."}
-{"timestamp": "2025-10-06T15:19:21.253Z", "level": "INFO", "logger": "__main__", "message": "Wrote embeddings to C:\\Users\\Administrator\\Desktop\\lavoro\\storico\\data\\curated\\client_embeddings.parquet"}
-{"timestamp": "2025-10-06T15:19:21.255Z", "level": "INFO", "logger": "__main__", "message": "Wrote metadata to C:\\Users\\Administrator\\Desktop\\lavoro\\storico\\data\\curated\\client_embeddings_meta.json"}
