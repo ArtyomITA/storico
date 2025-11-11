@@ -687,6 +687,155 @@ def render_claim_evidence_box(
     st.markdown(claims_html, unsafe_allow_html=True)
 
 
+def _render_coherence_panel(
+    selected_client: str,
+    pattern_row: Optional[pd.Series] = None,
+    cluster_row: Optional[pd.Series] = None,
+) -> None:
+    """
+    Render Coerenza con Pattern panel (Prompt 11).
+    
+    Shows agreement_score badge (green/yellow/red), comparison between model top-k
+    and dominant policy top-k, and motivations.
+    
+    Args:
+        selected_client: Client identifier
+        pattern_row: Client pattern row with dominant_policy, pattern_confidence
+        cluster_row: Optional cluster row with cluster_label, membership_prob
+    """
+    st.markdown("---")
+    st.markdown("### 🎯 Coerenza con Pattern Cliente")
+    st.caption("Confronta il ranking del modello (p_i) con la policy dominante del cliente")
+    
+    # Load predictions with agreement_score
+    try:
+        base_dir = Path(__file__).resolve().parents[2]
+        curated_dir = base_dir / "data" / "curated"
+        predictions_path = curated_dir / "event_policy_predictions.parquet"
+        
+        if not predictions_path.exists():
+            st.info("📊 Esegui scoring (Prompt 7: `python src/analytics/score_open_invoices.py`) per vedere coerenza con pattern storico")
+            return
+        
+        predictions_df = pd.read_parquet(predictions_path)
+        client_predictions = predictions_df[predictions_df["cliente"] == selected_client].copy()
+        
+        if client_predictions.empty:
+            st.info(f"📊 Nessuna predizione trovata per cliente {selected_client}")
+            return
+    
+    except Exception as e:
+        st.warning(f"⚠️ Errore caricamento predizioni: {e}")
+        return
+    
+    # Get aggregated agreement_score (media su tutti gli eventi)
+    if "agreement_score" not in client_predictions.columns:
+        st.warning("⚠️ Colonna `agreement_score` non trovata. Riesegui Prompt 7.")
+        return
+    
+    agreement_score = float(client_predictions["agreement_score"].mean())
+    alignment_status = client_predictions["alignment_status"].mode().iloc[0] if "alignment_status" in client_predictions.columns else "unknown"
+    
+    # Get pattern metrics
+    dominant_policy = pattern_row.get("dominant_policy", "n.d.") if pattern_row is not None and not pattern_row.empty else "n.d."
+    pattern_confidence = pattern_row.get("pattern_confidence", 0.0) if pattern_row is not None and not pattern_row.empty else 0.0
+    
+    # Badge logic
+    if alignment_status == "aligned" or agreement_score > 0.7:
+        badge_color = "#28a745"  # green
+        badge_emoji = "✅"
+        badge_text = "In linea con pattern storico"
+    elif alignment_status == "partial" or agreement_score > 0.4:
+        badge_color = "#ffc107"  # yellow
+        badge_emoji = "⚠️"
+        badge_text = "Parzialmente allineato"
+    else:  # divergent
+        badge_color = "#dc3545"  # red
+        badge_emoji = "❌"
+        badge_text = "Divergente dal pattern storico"
+    
+    # Display badge
+    st.markdown(
+        f"""
+        <div style='background:{badge_color};color:white;padding:1.2rem;border-radius:10px;text-align:center;margin-bottom:1rem;'>
+        <h3 style='margin:0;color:white;'>{badge_emoji} {badge_text}</h3>
+        <p style='margin:0.5rem 0 0 0;font-size:1.05rem;'>Agreement Score: <strong>{agreement_score:.2f}</strong> | Policy dominante: <strong>{dominant_policy.upper()}</strong></p>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+    
+    # Two-column metrics
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.markdown("**📊 Metriche Pattern**")
+        st.metric("Policy Dominante", dominant_policy.upper())
+        st.metric("Pattern Confidence", f"{pattern_confidence:.2f}")
+        
+        if cluster_row is not None and not cluster_row.empty:
+            cluster_label = cluster_row.get("cluster_label", "n.d.")
+            membership_prob = cluster_row.get("membership_prob", 0.0)
+            st.metric("Cluster Label", f"{cluster_label}")
+            st.metric("Membership Prob", f"{membership_prob:.2f}")
+    
+    with col2:
+        st.markdown("**🎯 Coerenza Modello**")
+        st.metric("Agreement Score", f"{agreement_score:.2f}")
+        st.metric("Alignment Status", alignment_status.capitalize())
+        
+        # Interpretation
+        if agreement_score > 0.7:
+            st.success("✓ **Modello allineato**: ranking coerente con comportamento storico")
+        elif agreement_score > 0.4:
+            st.warning("⚠ **Parziale allineamento**: verifica eventuali anomalie comportamentali")
+        else:
+            st.error("✗ **Basso allineamento**: possibile cambio strategia cliente o pattern atipico")
+    
+    # Top-k comparison table
+    st.markdown("**📋 Confronto Top-K: Modello vs Policy Dominante**")
+    st.caption("Confronto tra le fatture top-ranked dal modello (p_i) e dalla policy dominante")
+    
+    # Get top-k from predictions
+    k = min(5, len(client_predictions))
+    top_k_model = client_predictions.nlargest(k, "p_i")[["numero_documento", "p_i", "rank"]].copy()
+    top_k_model.columns = ["Numero Documento", "Probabilità (p_i)", "Rank Modello"]
+    
+    # Get top-k from dominant policy (if available)
+    policy_col = f"{dominant_policy}_rank" if f"{dominant_policy}_rank" in client_predictions.columns else None
+    
+    if policy_col:
+        top_k_policy = client_predictions.nsmallest(k, policy_col)[["numero_documento", policy_col]].copy()
+        top_k_policy.columns = ["Numero Documento", f"Rank {dominant_policy.upper()}"]
+        
+        # Merge for comparison
+        comparison_df = top_k_model.merge(top_k_policy, on="Numero Documento", how="outer", indicator=True)
+        comparison_df["Overlap"] = comparison_df["_merge"].apply(lambda x: "✅" if x == "both" else "")
+        comparison_df = comparison_df.drop(columns=["_merge"])
+        
+        st.dataframe(comparison_df, use_container_width=True, hide_index=True)
+        
+        # Overlap percentage
+        overlap_count = (comparison_df["Overlap"] == "✅").sum()
+        overlap_pct = overlap_count / k * 100 if k > 0 else 0.0
+        st.info(f"📊 **Overlap**: {overlap_count}/{k} fatture ({overlap_pct:.0f}%) in comune tra modello e {dominant_policy.upper()}")
+    
+    else:
+        st.dataframe(top_k_model, use_container_width=True, hide_index=True)
+        st.info(f"⚠️ Policy rank per `{dominant_policy}` non trovata nelle predizioni.")
+    
+    # Motivazioni SHAP (reference to existing section)
+    with st.expander("🔍 Motivazioni SHAP (Top-3 Features)"):
+        st.info("💡 Le motivazioni SHAP (top-3 feature più influenti) sono già visualizzate nella sezione **'Explainability Panel' → 'SHAP (prime 2 fatture)'** più in basso.")
+        st.markdown("""
+        **Cosa sono le SHAP values?**
+        - **SHAP** (SHapley Additive exPlanations) misura l'impatto di ciascuna feature sulla predizione del modello.
+        - **Feature positive** (barra verso destra): aumentano la probabilità di pagamento (p_i ↑)
+        - **Feature negative** (barra verso sinistra): diminuiscono la probabilità di pagamento (p_i ↓)
+        - Le top-3 feature spiegano **perché** il modello ha rankato una fattura in alto o in basso.
+        """)
+
+
 def render_pattern_card_v2(
     selected_client: str,
     events: pd.DataFrame,
@@ -837,6 +986,27 @@ def render_pattern_card_v2(
         "✅ Mese completo %",
         f"{month_cov_full_rate:.1%}",
         help="% eventi con copertura = 100% (tutte fatture del mese pagate)"
+    )
+    
+    # === COHERENCE PANEL (Prompt 11) ===
+    # Load cluster data for coherence panel
+    cluster_row = None
+    try:
+        base_dir = Path(__file__).resolve().parents[2]
+        curated_dir = base_dir / "data" / "curated"
+        clusters_path = curated_dir / "client_clusters.parquet"
+        
+        if clusters_path.exists():
+            clusters_df = pd.read_parquet(clusters_path)
+            if selected_client in clusters_df["cliente"].values:
+                cluster_row = clusters_df[clusters_df["cliente"] == selected_client].iloc[0]
+    except Exception:
+        pass  # Cluster data optional
+    
+    _render_coherence_panel(
+        selected_client=selected_client,
+        pattern_row=pattern_row,
+        cluster_row=cluster_row,
     )
     
     # === EXPLAINABILITY PANEL (full width) ===

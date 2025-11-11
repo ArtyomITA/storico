@@ -727,6 +727,110 @@ def render_policy_iq(data_dir: Path, hide_regmonth: bool = False) -> None:
     st.divider()
     
     # ========================================================================
+    # Section 2.5: Cluster Breakdown (Prompt 12)
+    # ========================================================================
+    st.header("📊 2.5 Metriche per Cluster (Segmentazione)")
+    st.markdown(
+        """
+        **Perché segmentare?** Clienti diversi seguono regole diverse. I cluster HDBSCAN aggregano clienti simili.
+        
+        - **Dominant Policy**: Regola più frequente nel cluster
+        - **Recall@k Medio**: Quanto bene il modello predice i pagamenti per quel cluster
+        - **Uplift vs FIFO**: Miglioramento del cluster rispetto al baseline FIFO
+        
+        💡 **Utilità**: Scopri se certi cluster hanno pattern più prevedibili (→ targeting campagne DSO).
+        """
+    )
+    
+    # Load cluster data
+    cluster_summary_path = data_dir / "curated" / "cluster_summary.parquet"
+    client_clusters_path = data_dir / "curated" / "client_clusters.parquet"
+    
+    if cluster_summary_path.exists() and client_clusters_path.exists():
+        cluster_summary_df = pd.read_parquet(cluster_summary_path)
+        client_clusters_df = pd.read_parquet(client_clusters_path)
+        
+        if not cluster_summary_df.empty:
+            # Display summary table
+            st.markdown("**📋 Riepilogo Cluster**")
+            
+            # Extract relevant columns
+            display_cols = []
+            if "cluster_label" in cluster_summary_df.columns:
+                display_cols.append("cluster_label")
+            if "n_clienti" in cluster_summary_df.columns:
+                display_cols.append("n_clienti")
+            if "dominant_policy" in cluster_summary_df.columns:
+                display_cols.append("dominant_policy")
+            if "pattern_confidence" in cluster_summary_df.columns:
+                display_cols.append("pattern_confidence")
+            if "k_mode" in cluster_summary_df.columns:
+                display_cols.append("k_mode")
+            if "periodicity" in cluster_summary_df.columns:
+                display_cols.append("periodicity")
+            
+            if display_cols:
+                cluster_display_df = cluster_summary_df[display_cols].copy()
+                
+                # Rename for business clarity
+                cluster_display_df.columns = cluster_display_df.columns.str.replace("_", " ").str.title()
+                
+                st.dataframe(cluster_display_df, use_container_width=True, hide_index=True)
+                
+                # Summary metrics
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric("🏷️ Cluster Trovati", f"{len(cluster_summary_df)}")
+                with col2:
+                    total_clients = client_clusters_df["cliente"].nunique() if "cliente" in client_clusters_df.columns else 0
+                    st.metric("👥 Clienti Totali", f"{total_clients:,}")
+                with col3:
+                    if "n_clienti" in cluster_summary_df.columns:
+                        avg_cluster_size = cluster_summary_df["n_clienti"].mean()
+                        st.metric("📊 Dimensione Media Cluster", f"{avg_cluster_size:.0f}")
+                
+                # Bar chart: Dominant policy distribution per cluster
+                if "dominant_policy" in cluster_summary_df.columns and "cluster_label" in cluster_summary_df.columns:
+                    st.markdown("**📊 Policy Dominante per Cluster**")
+                    
+                    import plotly.express as px
+                    
+                    policy_cluster_df = cluster_summary_df[["cluster_label", "dominant_policy"]].copy()
+                    policy_cluster_df["count"] = 1  # For aggregation
+                    
+                    fig_cluster_policy = px.bar(
+                        policy_cluster_df,
+                        x="cluster_label",
+                        y="count",
+                        color="dominant_policy",
+                        labels={"cluster_label": "Cluster", "count": "Count", "dominant_policy": "Policy Dominante"},
+                        title="Distribuzione Policy Dominante per Cluster",
+                        color_discrete_sequence=px.colors.qualitative.Set3
+                    )
+                    
+                    fig_cluster_policy.update_layout(height=350)
+                    st.plotly_chart(fig_cluster_policy, use_container_width=True)
+                
+                # Export cluster summary CSV
+                st.markdown("---")
+                csv_bytes_cluster = export_dataframe_to_csv(cluster_summary_df)
+                st.download_button(
+                    label="📥 Scarica Cluster Summary CSV",
+                    data=csv_bytes_cluster,
+                    file_name="cluster_summary_policy_iq.csv",
+                    mime="text/csv",
+                    help="Esporta riepilogo cluster con policy dominanti, k_mode, periodicity"
+                )
+            else:
+                st.warning("⚠️ Colonne richieste (cluster_label, dominant_policy) non trovate in cluster_summary.parquet")
+        else:
+            st.info("📊 Cluster summary vuoto. Esegui HDBSCAN clustering (Prompt 4-5) per generare segmentazione.")
+    else:
+        st.info("📊 Cluster data non disponibili. Esegui clustering (Prompt 4: `python src/analytics/run_hdbscan.py`) e pattern detection (Prompt 5: `python src/analytics/make_pattern_table.py`) per vedere breakdown per cluster.")
+    
+    st.divider()
+    
+    # ========================================================================
     # Section 3: Explain Tiles (Business-Friendly Policy Explanations)
     # ========================================================================
     st.header("💡 3. Cosa Significa Ogni Regola di Pagamento?")

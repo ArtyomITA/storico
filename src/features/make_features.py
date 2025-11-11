@@ -53,20 +53,30 @@ def configure_logging(level: int | str | None = logging.INFO) -> Path:
 
 
 def load_curated_datasets(project_root: Path) -> Dict[str, pd.DataFrame]:
-    """Load curated artifacts required for feature engineering."""
+    """Load curated artifacts required for feature engineering.
+    
+    Prompt 3 enhancement: also load line_items for month_coverage calculation.
+    """
     curated_dir = project_root / "data" / "curated"
     paths = {
         "train_pointwise": curated_dir / "train_pointwise.parquet",
         "events": curated_dir / "events.parquet",
         "event_items": curated_dir / "event_items.parquet",
+        "line_items": curated_dir / "line_items.parquet",  # Added for month_coverage
     }
 
     dataframes: Dict[str, pd.DataFrame] = {}
     for name, path in paths.items():
         if not path.exists():
-            raise FileNotFoundError(f"Missing required input file: {path}")
-        LOGGER.info("Loading %s from %s", name, path)
-        dataframes[name] = pd.read_parquet(path)
+            if name == "line_items":
+                # Optional: month_coverage will be skipped if not available
+                LOGGER.warning("Optional file %s not found; month_coverage will be zeros", path)
+                dataframes[name] = pd.DataFrame()
+            else:
+                raise FileNotFoundError(f"Missing required input file: {path}")
+        else:
+            LOGGER.info("Loading %s from %s", name, path)
+            dataframes[name] = pd.read_parquet(path)
     return dataframes
 
 
@@ -301,8 +311,27 @@ def _compute_sequence_features(group: pd.DataFrame) -> pd.DataFrame:
     return result.reindex(original_index)
 
 
-def compute_client_profiles(events: pd.DataFrame, event_items: pd.DataFrame) -> pd.DataFrame:
-    """Compute historical client-level summary statistics."""
+def compute_client_profiles(
+    events: pd.DataFrame, 
+    event_items: pd.DataFrame,
+    line_items: pd.DataFrame | None = None,
+) -> pd.DataFrame:
+    """Compute historical client-level summary statistics (for HDBSCAN).
+    
+    Prompt 3 requirements:
+    - Cardinalità k per evento (k_mode, k_entropy, P_k1, P_k2, P_kge3)
+    - Periodicità (inter-event gaps, ACF features, dow/dom concentration)
+    - Coverage mensile (month_coverage_* se line_items disponibile)
+    - Distribuzioni policy storiche (p_same_period_hist)
+    
+    Args:
+        events: Events DataFrame with cliente, data_pareggio, n_righe_evento
+        event_items: Event items with policy scores
+        line_items: Optional line items for month_coverage calculation
+    
+    Returns:
+        DataFrame with client-level features (one row per cliente)
+    """
     if event_items.empty:
         return pd.DataFrame(
             columns=[
@@ -315,6 +344,13 @@ def compute_client_profiles(events: pd.DataFrame, event_items: pd.DataFrame) -> 
                 "gap_med_events",
                 "dow_sin_mean_hist",
                 "dow_cos_mean_hist",
+                "month_coverage_mean",
+                "month_coverage_p95",
+                "month_coverage_full_rate",
+                "acf_lag1",
+                "acf_lag7",
+                "acf_lag14",
+                "acf_lag30",
             ]
         )
 
@@ -373,6 +409,44 @@ def compute_client_profiles(events: pd.DataFrame, event_items: pd.DataFrame) -> 
         profiles["dow_sin_event_mean"] = 0.0
         profiles["dow_cos_event_mean"] = 0.0
 
+    # ACF (Autocorrelation Function) for periodicity - Prompt 3 requirement
+    # Compute ACF on inter-event gaps for each client
+    if not events.empty and "inter_event_gap_days" in events.columns:
+        acf_profiles = _compute_acf_features(events)
+        profiles = profiles.join(acf_profiles, how="left")
+    else:
+        profiles["acf_lag1"] = 0.0
+        profiles["acf_lag7"] = 0.0
+        profiles["acf_lag14"] = 0.0
+        profiles["acf_lag30"] = 0.0
+    
+    # Month coverage metrics - Prompt 3 requirement
+    # Integrate month_coverage_* if line_items available
+    if line_items is not None and not line_items.empty:
+        try:
+            from src.analytics.month_coverage import compute_month_coverage_metrics
+            
+            coverage_df = compute_month_coverage_metrics(events, event_items, line_items)
+            if not coverage_df.empty:
+                profiles = profiles.merge(
+                    coverage_df[["cliente", "month_coverage_mean", "month_coverage_p95", "month_coverage_full_rate"]],
+                    on="cliente",
+                    how="left"
+                )
+            else:
+                profiles["month_coverage_mean"] = 0.0
+                profiles["month_coverage_p95"] = 0.0
+                profiles["month_coverage_full_rate"] = 0.0
+        except ImportError:
+            LOGGER.warning("month_coverage module not available; skipping coverage metrics")
+            profiles["month_coverage_mean"] = 0.0
+            profiles["month_coverage_p95"] = 0.0
+            profiles["month_coverage_full_rate"] = 0.0
+    else:
+        profiles["month_coverage_mean"] = 0.0
+        profiles["month_coverage_p95"] = 0.0
+        profiles["month_coverage_full_rate"] = 0.0
+
     # Tipo documento distribution
     tipo_counts = (
         items.groupby(["cliente", "tipo_documento"]).size().unstack(fill_value=0)
@@ -385,6 +459,65 @@ def compute_client_profiles(events: pd.DataFrame, event_items: pd.DataFrame) -> 
     profiles["cliente"] = profiles["cliente"].astype("string")
 
     return profiles
+
+
+def _compute_acf_features(events: pd.DataFrame) -> pd.DataFrame:
+    """Compute Autocorrelation Function (ACF) features for inter-event gaps.
+    
+    Prompt 3 requirement: periodicity detection via ACF on inter-event gaps.
+    Computes ACF at lags 1, 7, 14, 30 days to detect:
+    - lag1: immediate correlation (smoothness)
+    - lag7: weekly patterns
+    - lag14: bi-weekly patterns
+    - lag30: monthly patterns
+    
+    Args:
+        events: Events DataFrame with cliente, inter_event_gap_days
+    
+    Returns:
+        DataFrame indexed by cliente with acf_lag1, acf_lag7, acf_lag14, acf_lag30
+    """
+    if "inter_event_gap_days" not in events.columns:
+        return pd.DataFrame(columns=["acf_lag1", "acf_lag7", "acf_lag14", "acf_lag30"])
+    
+    acf_records = []
+    lags = [1, 7, 14, 30]
+    
+    for cliente, group in events.groupby("cliente"):
+        gaps = group["inter_event_gap_days"].dropna().to_numpy(dtype=float)
+        
+        if gaps.size < 3:
+            # Not enough data for ACF
+            acf_values = [0.0] * len(lags)
+        else:
+            acf_values = []
+            for lag in lags:
+                if lag >= gaps.size:
+                    acf_values.append(0.0)
+                else:
+                    # Compute Pearson correlation at given lag
+                    x = gaps[:-lag]
+                    y = gaps[lag:]
+                    if x.size < 2:
+                        acf_values.append(0.0)
+                    else:
+                        try:
+                            corr = float(np.corrcoef(x, y)[0, 1])
+                            acf_values.append(corr if not np.isnan(corr) else 0.0)
+                        except:
+                            acf_values.append(0.0)
+        
+        acf_records.append({
+            "cliente": cliente,
+            "acf_lag1": acf_values[0],
+            "acf_lag7": acf_values[1],
+            "acf_lag14": acf_values[2],
+            "acf_lag30": acf_values[3],
+        })
+    
+    acf_df = pd.DataFrame(acf_records)
+    acf_df = acf_df.set_index("cliente")
+    return acf_df
 
 
 def _percentile_rank_to_decile(rank: pd.Series, count: pd.Series) -> pd.Series:
@@ -765,24 +898,35 @@ def log_consecutive_block_examples(features: pd.DataFrame, max_examples: int = 3
 def save_feature_outputs(
     feature_matrix: pd.DataFrame,
     client_profiles: pd.DataFrame,
+    events_with_features: pd.DataFrame,
     project_root: Path,
 ) -> None:
-    """Persist engineered datasets to the curated directory."""
+    """Persist engineered datasets to the curated directory.
+    
+    Prompt 3 outputs:
+    - train_features.parquet: invoice-level features for ranking (no leakage)
+    - client_profiles.parquet: client-level features for HDBSCAN
+    - events_with_features.parquet: events enriched with calendar features
+    """
     curated_dir = project_root / "data" / "curated"
     curated_dir.mkdir(parents=True, exist_ok=True)
 
     features_path = curated_dir / "train_features.parquet"
     profiles_path = curated_dir / "client_profiles.parquet"
+    events_path = curated_dir / "events_with_features.parquet"
 
     feature_matrix.to_parquet(features_path, compression="snappy", index=False)
     client_profiles.to_parquet(profiles_path, compression="snappy", index=False)
+    events_with_features.to_parquet(events_path, compression="snappy", index=False)
 
     LOGGER.info(
-        "Saved %s rows to %s and %s client profiles to %s",
+        "Saved %s rows to %s, %s client profiles to %s, and %s events to %s",
         len(feature_matrix),
         features_path,
         len(client_profiles),
         profiles_path,
+        len(events_with_features),
+        events_path,
     )
 
 
@@ -830,7 +974,14 @@ def main() -> None:
 
     datasets = load_curated_datasets(project_root)
     events_with_calendar = enrich_events_with_calendar_features(datasets["events"])
-    client_profiles = compute_client_profiles(events_with_calendar, datasets["event_items"])
+    
+    # Prompt 3: pass line_items to compute_client_profiles for month_coverage
+    line_items = datasets.get("line_items", pd.DataFrame())
+    client_profiles = compute_client_profiles(
+        events_with_calendar, 
+        datasets["event_items"],
+        line_items if not line_items.empty else None
+    )
     client_profiles = client_profiles.fillna(0.0)
 
     feature_matrix = build_feature_matrix(
@@ -845,7 +996,9 @@ def main() -> None:
 
     log_feature_statistics(feature_matrix, FEATURES_TO_LOG)
     log_mean_gini_per_client(feature_matrix)
-    save_feature_outputs(feature_matrix, client_profiles, project_root)
+    
+    # Prompt 3: export events_with_features.parquet
+    save_feature_outputs(feature_matrix, client_profiles, events_with_calendar, project_root)
     run_random_forest_smoke_test(feature_matrix)
 
 

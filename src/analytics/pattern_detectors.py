@@ -242,6 +242,8 @@ def load_curated_tables(project_root: Path) -> Dict[str, pd.DataFrame]:
         "line_items": "line_items.parquet",
         "train_features": "train_features.parquet",
         "train_pointwise": "train_pointwise.parquet",
+        "client_profiles": "client_profiles.parquet",  # Prompt 5: load client profiles
+        "client_clusters": "client_clusters.parquet",  # Prompt 5: load cluster assignments
     }
 
     tables: Dict[str, pd.DataFrame] = {}
@@ -768,6 +770,232 @@ def save_per_event_scores(df: pd.DataFrame, project_root: Path) -> Path:
     return output_path
 
 
+def determine_dominant_policy(row: pd.Series, policy_names: List[str] = POLICY_NAMES) -> str:
+    """Determine the dominant policy for a client based on policy scores.
+    
+    Prompt 5: Use transparent rules with fallback on historical distributions.
+    
+    Args:
+        row: Client row with policy_*_score columns
+        policy_names: List of policy names to consider
+        
+    Returns:
+        Name of dominant policy (e.g., 'fifo', 'lifo', 'eomfirst')
+    """
+    policy_scores = {}
+    for policy in policy_names:
+        score_col = f"{policy}_score"
+        if score_col in row.index:
+            policy_scores[policy] = float(row[score_col])
+        else:
+            policy_scores[policy] = 0.0
+    
+    if not policy_scores or max(policy_scores.values()) < 0.1:
+        # Fallback: no clear pattern
+        return "irregolare"
+    
+    # Return policy with highest score
+    dominant = max(policy_scores.items(), key=lambda x: x[1])
+    return dominant[0]
+
+
+def compute_pattern_confidence(
+    row: pd.Series,
+    dominant_policy: str,
+    policy_names: List[str] = POLICY_NAMES
+) -> float:
+    """Compute pattern confidence for a client.
+    
+    Prompt 5: Transparent heuristic based on dominant policy score and stability.
+    
+    Args:
+        row: Client row with policy scores and stability_index
+        dominant_policy: The dominant policy name
+        policy_names: List of policy names
+        
+    Returns:
+        Confidence score in [0, 1]
+    """
+    # Get dominant policy score
+    score_col = f"{dominant_policy}_score"
+    dominant_score = float(row.get(score_col, 0.0))
+    
+    # Get stability index (if available)
+    stability = float(row.get("stability_index", 0.5))
+    
+    # Compute Gini coefficient of policy scores (concentration measure)
+    policy_scores = []
+    for policy in policy_names:
+        score_col = f"{policy}_score"
+        if score_col in row.index:
+            policy_scores.append(float(row[score_col]))
+    
+    if len(policy_scores) <= 1:
+        gini = 0.0
+    else:
+        sorted_scores = sorted(policy_scores)
+        n = len(sorted_scores)
+        cumsum = np.cumsum(sorted_scores)
+        total = cumsum[-1] if len(cumsum) > 0 else 0.0
+        if total == 0:
+            gini = 0.0
+        else:
+            # Gini coefficient: 1 = perfect concentration (good), 0 = uniform (bad)
+            gini = float((2.0 * np.sum((np.arange(1, n + 1)) * sorted_scores) / (n * total)) - (n + 1) / n)
+    
+    # Confidence: weighted combination
+    # Higher dominant score + higher stability + higher concentration = higher confidence
+    confidence = 0.5 * dominant_score + 0.3 * stability + 0.2 * gini
+    return float(np.clip(confidence, 0.0, 1.0))
+
+
+def extract_periodicity_flags(row: pd.Series) -> Dict[str, bool]:
+    """Extract periodicity flags (weekly, biweekly, monthly) from row.
+    
+    Prompt 5: Explicit threshold-based rules.
+    
+    Args:
+        row: Client row with periodicity_* columns
+        
+    Returns:
+        Dict with periodicity_weekly, periodicity_biweekly, periodicity_monthly booleans
+    """
+    threshold = 0.6  # 60% of events must match pattern
+    
+    return {
+        "periodicity_weekly": bool(row.get("periodicity_weekly", 0.0) >= threshold),
+        "periodicity_biweekly": bool(row.get("periodicity_biweekly", 0.0) >= threshold),
+        "periodicity_monthly": bool(row.get("periodicity_monthly", 0.0) >= threshold),
+    }
+
+
+def build_client_patterns(
+    client_profiles: pd.DataFrame,
+    client_clusters: pd.DataFrame,
+    client_pattern_scores: pd.DataFrame
+) -> pd.DataFrame:
+    """Build client_patterns.parquet integrating profiles, clusters, and pattern scores.
+    
+    Prompt 5: Assign dominant_policy, pattern_confidence, periodicity flags, k_mode, month_coverage_*.
+    
+    Args:
+        client_profiles: From make_features.py (Prompt 3)
+        client_clusters: From run_hdbscan.py (Prompt 4)
+        client_pattern_scores: From build_client_pattern_scores()
+        
+    Returns:
+        DataFrame with cliente, cluster_label, dominant_policy, pattern_confidence,
+        periodicity_weekly, periodicity_monthly, k_mode, month_coverage_*, etc.
+    """
+    # Start with client_pattern_scores (has all policy scores + cardinality + periodicity)
+    patterns = client_pattern_scores.copy()
+    
+    # Merge cluster assignments (if available)
+    if not client_clusters.empty and "cliente" in client_clusters.columns:
+        cluster_cols = ["cliente", "cluster_label", "membership_prob"]
+        cluster_cols = [col for col in cluster_cols if col in client_clusters.columns]
+        patterns = patterns.merge(
+            client_clusters[cluster_cols],
+            on="cliente",
+            how="left"
+        )
+        LOGGER.info("Merged cluster assignments for %d clients", len(patterns))
+    else:
+        patterns["cluster_label"] = -1  # Noise/no clustering
+        patterns["membership_prob"] = 0.0
+        LOGGER.warning("No client_clusters available; using default cluster_label=-1")
+    
+    # Merge additional features from client_profiles (if not already present)
+    if not client_profiles.empty and "cliente" in client_profiles.columns:
+        # Identify features from client_profiles not already in patterns
+        profile_features = [
+            col for col in client_profiles.columns
+            if col != "cliente" and col not in patterns.columns
+        ]
+        if profile_features:
+            patterns = patterns.merge(
+                client_profiles[["cliente"] + profile_features],
+                on="cliente",
+                how="left"
+            )
+            LOGGER.info("Merged %d additional features from client_profiles", len(profile_features))
+    
+    # Apply Prompt 5 transformations
+    patterns["dominant_policy"] = patterns.apply(
+        lambda row: determine_dominant_policy(row), axis=1
+    )
+    
+    patterns["pattern_confidence"] = patterns.apply(
+        lambda row: compute_pattern_confidence(row, row["dominant_policy"]), axis=1
+    )
+    
+    # Extract periodicity flags as separate columns
+    periodicity_flags = patterns.apply(extract_periodicity_flags, axis=1)
+    for key in ["periodicity_weekly", "periodicity_biweekly", "periodicity_monthly"]:
+        patterns[f"{key}_flag"] = periodicity_flags.apply(lambda x: x[key])
+    
+    # Ensure required columns exist (Prompt 5 acceptance criteria)
+    required_cols = [
+        "cliente", "dominant_policy", "pattern_confidence",
+        "periodicity_weekly_flag", "periodicity_monthly_flag",
+        "k_mode"
+    ]
+    
+    # Add month_coverage_* if present
+    month_coverage_cols = [
+        col for col in patterns.columns
+        if col.startswith("month_coverage_")
+    ]
+    
+    for col in required_cols:
+        if col not in patterns.columns:
+            LOGGER.warning("Required column %s missing; adding default", col)
+            if col == "k_mode":
+                patterns[col] = 0.0
+            elif col == "pattern_confidence":
+                patterns[col] = 0.0
+            elif "periodicity" in col:
+                patterns[col] = False
+            elif col == "dominant_policy":
+                patterns[col] = "irregolare"
+    
+    # Log summary
+    LOGGER.info(
+        "Built client_patterns for %d clients with %d features (includes %d month_coverage cols)",
+        len(patterns),
+        len(patterns.columns),
+        len(month_coverage_cols)
+    )
+    
+    dominant_counts = patterns["dominant_policy"].value_counts().head(5).to_dict()
+    LOGGER.info("Top 5 dominant policies: %s", dominant_counts)
+    
+    avg_confidence = patterns["pattern_confidence"].mean()
+    LOGGER.info("Average pattern confidence: %.3f", avg_confidence)
+    
+    return patterns
+
+
+def save_client_patterns(df: pd.DataFrame, project_root: Path) -> Path:
+    """Save client_patterns.parquet to curated directory.
+    
+    Prompt 5: Final output for Pattern Card consumption.
+    
+    Args:
+        df: client_patterns DataFrame
+        project_root: Project root directory
+        
+    Returns:
+        Path to saved parquet file
+    """
+    curated_dir = project_root / "data" / "curated"
+    curated_dir.mkdir(parents=True, exist_ok=True)
+    output_path = curated_dir / "client_patterns.parquet"
+    df.to_parquet(output_path, compression="snappy", index=False)
+    LOGGER.info("Saved %s client pattern rows to %s", len(df), output_path)
+    return output_path
+
+
 def print_pattern_examples(scores: pd.DataFrame, per_event_scores: pd.DataFrame, examples: int = 3) -> None:
     """Print sample clients with inferred labels and top policies."""
     if scores.empty:
@@ -786,7 +1014,11 @@ def print_pattern_examples(scores: pd.DataFrame, per_event_scores: pd.DataFrame,
 
 
 def main() -> None:
-    """Entry-point for running the pattern detection workflow."""
+    """Entry-point for running the pattern detection workflow.
+    
+    Prompt 5: Generate client_patterns.parquet with dominant_policy, pattern_confidence,
+    periodicity flags, k_mode, month_coverage_* by integrating client_profiles + client_clusters.
+    """
     configure_logging()
     project_root = Path(__file__).resolve().parents[2]
     tables = load_curated_tables(project_root)
@@ -799,7 +1031,7 @@ def main() -> None:
     )
     cardinality_df = compute_cardinality_metrics(tables["events"])
     
- # Compute month coverage metrics
+    # Compute month coverage metrics
     from src.analytics.month_coverage import compute_month_coverage_metrics
     LOGGER.info("Computing month full payment coverage metrics")
     coverage_df = compute_month_coverage_metrics(
@@ -808,7 +1040,7 @@ def main() -> None:
         tables.get("line_items", pd.DataFrame())
     )
     
-    client_scores = build_client_pattern_scores(
+    client_pattern_scores = build_client_pattern_scores(
         tables["events"],
         policy_scores,
         cardinality_df,
@@ -816,23 +1048,38 @@ def main() -> None:
         per_event_scores,
     )
     
- # Merge coverage metrics into client_scores
+    # Merge coverage metrics into client_pattern_scores
     if not coverage_df.empty:
-        client_scores = client_scores.merge(
+        client_pattern_scores = client_pattern_scores.merge(
             coverage_df[["cliente", "month_coverage_mean", "month_coverage_p95", "month_coverage_full_rate"]],
             on="cliente",
             how="left"
         )
         # Fill NaN with 0 for clients without coverage data
-        client_scores["month_coverage_mean"] = client_scores["month_coverage_mean"].fillna(0.0)
-        client_scores["month_coverage_p95"] = client_scores["month_coverage_p95"].fillna(0.0)
-        client_scores["month_coverage_full_rate"] = client_scores["month_coverage_full_rate"].fillna(0.0)
+        client_pattern_scores["month_coverage_mean"] = client_pattern_scores["month_coverage_mean"].fillna(0.0)
+        client_pattern_scores["month_coverage_p95"] = client_pattern_scores["month_coverage_p95"].fillna(0.0)
+        client_pattern_scores["month_coverage_full_rate"] = client_pattern_scores["month_coverage_full_rate"].fillna(0.0)
         LOGGER.info("Merged month coverage metrics into client_pattern_scores")
 
-    save_client_pattern_scores(client_scores, project_root)
+    # Save intermediate client_pattern_scores (legacy output)
+    save_client_pattern_scores(client_pattern_scores, project_root)
     if not per_event_scores.empty:
         save_per_event_scores(per_event_scores, project_root)
-    print_pattern_examples(client_scores, per_event_scores)
+    
+    # Prompt 5: Build client_patterns.parquet integrating profiles + clusters
+    LOGGER.info("=== Prompt 5: Building client_patterns.parquet ===")
+    client_patterns = build_client_patterns(
+        client_profiles=tables.get("client_profiles", pd.DataFrame()),
+        client_clusters=tables.get("client_clusters", pd.DataFrame()),
+        client_pattern_scores=client_pattern_scores
+    )
+    
+    # Save client_patterns.parquet (Prompt 5 output)
+    patterns_path = save_client_patterns(client_patterns, project_root)
+    LOGGER.info("=== Prompt 5 complete: %s ===", patterns_path)
+    
+    # Print examples
+    print_pattern_examples(client_pattern_scores, per_event_scores)
 
 
 if __name__ == "__main__":

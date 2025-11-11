@@ -62,11 +62,12 @@ SAP_GLOSSARY = {
 # Wizard Step Definitions
 # ================================================================================================
 
+# Prompt 9: Updated wizard steps aligned with HDBSCAN→Scoring flow
 WIZARD_STEPS = [
     {
         "id": 1,
-        "title": "📥 Carica & Organizza i Dati",
-        "subtitle": "Importa i dati SAP e prepara il terreno",
+        "title": "📥 Carica Dati SAP",
+        "subtitle": "Importa e normalizza le partite aperte",
         "description": (
             "**Cosa succede:** Leggiamo i dati delle fatture dal tuo sistema SAP e li organizziamo "
             "in un formato pulito e pronto per l'analisi.\n\n"
@@ -80,66 +81,71 @@ WIZARD_STEPS = [
         "sap_pills": ["partite_aperte", "pareggio", "data_documento"],
         "technical_details": (
             "**Dettagli Tecnici:**\n"
-            "- Legge file Excel/CSV con mapping colonne SAP (es. BSAD, BSID)\n"
-            "- Normalizza formati data, importi, codici cliente\n"
-            "- Genera `line_items.parquet` con 19 colonne standardizzate\n"
-            "- Engine: Pandas + Pyarrow per performance"
+            "- Normalizzazione SAP: mapping colonne (BSAD, BSID) → schema contrattuale\n"
+            "- Validazioni: cliente non nullo, date coerenti, importi ≥0\n"
+            "- Genera `line_items.parquet`, `events.parquet`, `event_items.parquet`\n"
+            "- Engine: Pandas + Pyarrow per performance\n"
+            "- CLI: `python -m src.data.normalize_sap` (Prompt 2)"
         ),
-        "pipeline_steps": ["ingest", "events"],
-        "output_files": ["line_items.parquet", "events.parquet"],
-        "estimated_time": "2-5 minuti",
+        "pipeline_steps": ["normalize", "ingest", "events", "labels", "features"],
+        "output_files": ["line_items.parquet", "events.parquet", "event_items.parquet", "train_features.parquet", "client_profiles.parquet"],
+        "estimated_time": "3-7 minuti",
         "link_page": "Data Explorer",
     },
     {
         "id": 2,
-        "title": "🔍 Analizza i Pattern di Pagamento",
-        "subtitle": "Scopri come e quando i tuoi clienti pagano",
+        "title": "🧩 Segmenta Clienti (HDBSCAN)",
+        "subtitle": "Identifica gruppi di pagamento simili",
         "description": (
-            "**Cosa succede:** Studiamo lo storico dei pagamenti di ogni cliente per capire i loro comportamenti ricorrenti. "
-            "Ad esempio: 'Il cliente X paga sempre a fine mese' oppure 'Il cliente Y paga settimanalmente'.\n\n"
-            "**Cosa ottieni:** Una 'carta d'identità' di ogni cliente con le sue abitudini di pagamento, "
-            "i ritardi tipici, la regolarità, e i pattern più frequenti."
+            "**Cosa succede:** Analizziamo lo storico di ogni cliente per identificare **pattern stabili**: "
+            "chi paga sempre a fine mese, chi è settimanale, chi è irregolare. "
+            "Poi raggruppiamo clienti con comportamenti simili in cluster automatici.\n\n"
+            "**Cosa ottieni:** Una 'mappa dei comportamenti' dove ogni cliente appartiene a un gruppo "
+            "con caratteristiche comuni (es. 'Pagatori FIFO mensili', 'Irregolari multifattura')."
         ),
         "business_value": (
-            "💡 **Valore Business:** Conoscere i pattern ti permette di prevedere quando arriveranno i pagamenti, "
-            "ottimizzare la gestione del cash flow, e identificare clienti a rischio. "
-            "È come avere un radar per i pagamenti futuri."
+            "💡 **Valore Business:** Clustering ti permette di **segmentare strategie**: "
+            "solleciti personalizzati per gruppo, previsioni di cassa più accurate, identificazione rapida anomalie. "
+            "È come avere una 'famiglia' di clienti con regole comuni."
         ),
         "sap_pills": ["evento_pagamento", "data_registrazione"],
         "technical_details": (
             "**Dettagli Tecnici:**\n"
-            "- Feature engineering: età fattura, cadenza pagamenti, importo medio\n"
-            "- Pattern detectors: settimanale, mensile, fine mese, pagamento totale\n"
-            "- Genera `train_features.parquet`, `client_pattern_scores.parquet`\n"
-            "- Algoritmi: time-based aggregations, percentile ranking"
+            "- Feature engineering: periodicità (ACF), coverage mensile, policy score storici\n"
+            "- Embeddings: PCA/UMAP su client-level features (storico aggregato)\n"
+            "- Clustering: **HDBSCAN** (density-based, auto #cluster, metrica cosine)\n"
+            "- Pattern detector (Prompt 5): dominant_policy, pattern_confidence, k_mode\n"
+            "- Output: `client_clusters.parquet`, `client_patterns.parquet`, `cluster_summary.parquet`"
         ),
-        "pipeline_steps": ["labels", "features", "patterns", "rules", "table"],
-        "output_files": ["train_features.parquet", "client_pattern_scores.parquet", "pattern_table.parquet"],
-        "estimated_time": "5-10 minuti",
-        "link_page": "Pattern Card",
+        "pipeline_steps": ["embeddings", "projection", "hdbscan", "clusters", "patterns"],
+        "output_files": ["client_embeddings.parquet", "client_embedding_2d.parquet", "client_clusters.parquet", "client_patterns.parquet", "cluster_summary.parquet"],
+        "estimated_time": "5-12 minuti",
+        "link_page": "Clusters",
     },
     {
         "id": 3,
-        "title": "🎯 Costruisci il Modello Predittivo",
-        "subtitle": "Allena il sistema a prevedere i pagamenti",
+        "title": "🎯 Allena Modello Scoring",
+        "subtitle": "Prevedi quali fatture verranno pagate (p_i)",
         "description": (
-            "**Cosa succede:** Insegniamo al sistema a imparare dai comportamenti passati dei clienti. "
-            "Il sistema studia migliaia di esempi di 'fattura pagata' vs 'fattura non pagata' e impara a riconoscere i segnali.\n\n"
-            "**Cosa ottieni:** Un modello che, data una nuova fattura aperta, ti dice: "
-            "'Questa verrà probabilmente pagata entro X giorni con probabilità Y%'."
+            "**Cosa succede:** Insegniamo al sistema a calcolare **p_i = probabilità che fattura i sia pagata** "
+            "usando segnali locali (importo, scadenza, aging) + pattern del cliente (cluster, policy dominante). "
+            "Il modello impara da migliaia di esempi storici 'fattura pagata vs non pagata'.\n\n"
+            "**Cosa ottieni:** Un **ranking predittivo** per ogni cliente: data la lista fatture aperte, "
+            "il sistema ordina per probabilità di pagamento e mostra coherenza con il pattern storico."
         ),
         "business_value": (
-            "💡 **Valore Business:** Predizioni accurate ti permettono di pianificare liquidità, "
-            "decidere quali clienti sollecitare, e allocare risorse del team crediti in modo efficiente. "
-            "È come avere un esperto che conosce a memoria lo storico di ogni cliente."
+            "💡 **Valore Business:** Predizioni accurate ti permettono di **prioritizzare azioni**: "
+            "quali fatture sollecitare, dove allocare team crediti, stimare liquidità settimanale. "
+            "È come avere un esperto che conosce ogni cliente a memoria."
         ),
         "sap_pills": ["partite_aperte", "pareggio"],
         "technical_details": (
             "**Dettagli Tecnici:**\n"
-            "- Algoritmi ML: CatBoost + AutoGluon (ensemble)\n"
-            "- Training: split temporale, no data leakage\n"
-            "- Validazione: pre-training checks, calibrazione isotonica\n"
-            "- Output: `champion.json` con metriche MAE, accuracy, F1"
+            "- Algoritmi ML: **CatBoost** (primario) + AutoGluon (opzionale)\n"
+            "- Feature merge: invoice-level + cluster/pattern del cliente (no leakage)\n"
+            "- Training: split temporale, class imbalance handling, calibrazione isotonica\n"
+            "- Validation: pre-training checks, SHAP explainability\n"
+            "- Output: `champion.json`, `catboost.cbm`, `calibrator.pkl` (Prompt 6)"
         ),
         "pipeline_steps": ["validate", "train"],
         "output_files": ["champion.json", "catboost.cbm", "calibrator.pkl"],
@@ -148,36 +154,33 @@ WIZARD_STEPS = [
     },
     {
         "id": 4,
-        "title": "📊 Raggruppa & Valuta i Clienti",
-        "subtitle": "Identifica gruppi simili e calcola KPI",
+        "title": "📊 Rank Fatture Aperte",
+        "subtitle": "Scoring + coerenza con pattern cliente",
         "description": (
-            "**Cosa succede:** Raggruppiamo i clienti in famiglie con comportamenti simili (es. 'pagatori puntuali', "
-            "'pagatori a fine mese', 'ritardatari cronici'). Poi calcoliamo indicatori di performance per ogni cliente.\n\n"
-            "**Cosa ottieni:** Una mappa visuale dei tuoi clienti organizzati per somiglianza, "
-            "con KPI chiari (affidabilità, regolarità, esposizione rischio) per ogni gruppo."
+            "**Cosa succede:** Per ogni cliente con fatture aperte, calcoliamo **p_i per ogni fattura** "
+            "usando il modello allenato. Poi confrontiamo il ranking modello con la policy dominante del cliente "
+            "per generare un **agreement_score** (indica se il modello è allineato al comportamento storico).\n\n"
+            "**Cosa ottieni:** Tabella Top-k proposte con badge verde/giallo/rosso: "
+            "'✅ In linea con pattern' oppure '⚠️ Divergente dal solito comportamento'."
         ),
         "business_value": (
-            "💡 **Valore Business:** Clustering e KPI ti aiutano a segmentare la base clienti, "
-            "personalizzare strategie di gestione crediti (es. solleciti automatici per gruppo X), "
-            "e identificare opportunità di miglioramento. È come avere una dashboard executive per i pagamenti."
+            "💡 **Valore Business:** Scoring + coerenza ti aiutano a **prendere decisioni consapevoli**: "
+            "se il modello propone fatture anomale rispetto al pattern, puoi indagare (es. cambio strategia cliente). "
+            "È come avere sia il radar predittivo che il benchmark storico."
         ),
         "sap_pills": ["evento_pagamento"],
         "technical_details": (
             "**Dettagli Tecnici:**\n"
-            "- Embeddings: rappresentazione vettoriale clienti (feature → vettore 64D)\n"
-            "- Clustering: HDBSCAN (density-based, auto-detect numero cluster)\n"
-            "- Dimensionality reduction: UMAP per visualizzazione 2D\n"
-            "- KPI: ranking score, cluster profile, calibration diagnostics"
+            "- Scoring: p_i con calibrazione isotonica per ogni fattura aperta\n"
+            "- Coherence metric: confronto top-k modello vs top-k policy dominante\n"
+            "- Agreement score: overlap Jaccard + ranking correlation\n"
+            "- Policy ranking: FIFO, LIFO, largest, smallest, eomfirst (Prompt 7)\n"
+            "- Output: `event_policy_predictions.parquet` con p_i, rank, agreement_score, alignment_status"
         ),
-        "pipeline_steps": ["embeddings", "projection", "hdbscan", "clusters", "kpi", "calibration", "policy"],
-        "output_files": [
-            "client_embeddings.parquet",
-            "client_clusters.parquet",
-            "cluster_summary.parquet",
-            "kpi_ranking.parquet",
-        ],
+        "pipeline_steps": ["score", "kpi", "calibration", "policy"],
+        "output_files": ["event_policy_predictions.parquet", "kpi_ranking.parquet", "calibration_summary.parquet", "event_policy_metrics.parquet"],
         "estimated_time": "5-15 minuti",
-        "link_page": "Clusters",
+        "link_page": "Pattern Card",
     },
 ]
 
@@ -380,17 +383,17 @@ def _render_wizard_step_card(step: Dict[str, Any], step_completion: Dict[str, An
 
 
 def render_overview_wizard_page() -> None:
-    """Render PROMPT 4 Overview & Wizard page with CEO-friendly language."""
+    """Render Prompt 9 Overview & Wizard page - HDBSCAN→Scoring flow in 4 business-friendly steps."""
 
     # Hero section
-    st.title("🏠 Benvenuto nell'Analisi dei Pattern di Pagamento")
+    st.title("🏠 Benvenuto nell'Analisi Intelligente dei Pagamenti")
     st.markdown(
         """
         <div style='background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
                     padding: 2rem; border-radius: 10px; color: white; margin-bottom: 2rem;'>
-            <h2 style='margin: 0; color: white;'>Trasforma i tuoi dati SAP in insight azionabili</h2>
+            <h2 style='margin: 0; color: white;'>Da Dati SAP a Decisioni Strategiche</h2>
             <p style='font-size: 1.1rem; margin: 0.5rem 0 0 0; color: #f0f0f0;'>
-                Capisci come e quando i tuoi clienti pagano. Prevedi i flussi di cassa. Ottimizza la gestione crediti.
+                🧩 Segmenta i clienti per comportamento → 🎯 Prevedi quali fatture verranno pagate → 📊 Valida coerenza con pattern storici
             </p>
         </div>
         """,
@@ -400,19 +403,28 @@ def render_overview_wizard_page() -> None:
     # What this app does
     col1, col2 = st.columns([0.6, 0.4])
     with col1:
-        st.markdown("### 🎯 Cosa Fa Questa Applicazione?")
+        st.markdown("### 🎯 Flusso HDBSCAN → Scoring Predittivo")
         st.markdown(
             """
-            Questa applicazione analizza lo **storico dei pagamenti** dei tuoi clienti estratto da SAP 
-            per rispondere a domande cruciali:
+            Questo sistema usa un approccio **in due fasi** per massimizzare precisione e trasparenza:
             
-            - 📅 **Quando** arriveranno i prossimi pagamenti?
-            - 💰 **Quanto** posso aspettarmi di incassare questa settimana/mese?
-            - ⚠️ **Chi** sono i clienti a rischio ritardo?
-            - 📊 **Quali** pattern di pagamento hanno i miei top clienti?
-            - 🎯 **Come** posso ottimizzare la gestione del credito?
+            **1️⃣ HDBSCAN prima:** Identifica automaticamente **gruppi di clienti con comportamenti simili** 
+            analizzando lo storico pagamenti (mensile, settimanale, FIFO, LIFO, irregolare).
             
-            **Senza** bisogno di conoscenze tecniche o statistiche avanzate.
+            **2️⃣ Scoring dopo:** Allena un modello predittivo (CatBoost/AutoGluon) che stima **p_i = probabilità 
+            che fattura i sia pagata**, usando sia segnali locali (importo, scadenza) che il **pattern del cluster**.
+            
+            **Risultato:** Ranking fatture aperte + badge coerenza (verde="in linea col pattern", rosso="anomalia").
+            
+            ---
+            
+            **Domande a cui rispondiamo:**
+            
+            - � **Quando** arriveranno i prossimi pagamenti?
+            - 🧩 **Quali** cluster comportamentali esistono nella base clienti?
+            - � **Quali** fatture hanno alta probabilità di pagamento?
+            - ⚠️ **Chi** si comporta diversamente dal solito (divergenza dal pattern)?
+            - 📊 **Come** posso validare le predizioni con lo storico?
             """
         )
 
@@ -425,23 +437,36 @@ def render_overview_wizard_page() -> None:
             - Export SAP dei **pagamenti ricevuti** (Clearing Documents)
             - Formato: Excel (.xlsx) o CSV
             
-            **Colonne richieste:**
-            - Cliente, Data documento, Importo
-            - Data pareggio, Doc. pareggio
-            - Divisa, Tipo documento
+            **Colonne minime:**
+            - `Cliente`, `Numero Documento`, `Importo`
+            - `Data Documento`, `Data Pareggio`
+            - `Documento di Pareggio`, `Divisa`
             
-            _(Vedi mapping completo nella pagina Data Explorer)_
+            **File opzionali:**
+            - `Tipo Documento`, `Chiave Contabile`
+            - `Periodo Contabile`, `Società`
+            
+            _(Vedi mapping completo in Data Explorer)_
             """
         )
 
     st.divider()
 
-    # Wizard section
-    st.markdown("## 🧙‍♂️ Wizard: 4 Passi per l'Insight Completo")
+    # Wizard section - Prompt 9: Business-friendly flow explanation
+    st.markdown("## 🧙‍♂️ Wizard Guidato: Dal Caricamento Dati al Ranking Fatture")
     st.markdown(
         """
-        Segui questi 4 passi nell'ordine per analizzare i tuoi dati. Ogni step richiede il completamento 
-        del precedente. Clicca **"▶️ Esegui Step X"** per avviare l'elaborazione.
+        **Flusso in 4 passi:**  
+        1️⃣ **Carica dati SAP** → normalizza e prepara storico  
+        2️⃣ **Segmenta clienti** → HDBSCAN identifica cluster comportamentali  
+        3️⃣ **Allena modello** → CatBoost impara a predire p_i (probabilità pagamento)  
+        4️⃣ **Rank fatture** → scoring + coerenza con pattern cliente
+        
+        **🎯 Perché questo ordine?**  
+        HDBSCAN prima cattura **strategie stabili** (mensile, FIFO, k-mode). Il modello scoring poi usa 
+        queste feature per predizioni più accurate. La coerenza finale valida se le predizioni sono **allineate al comportamento storico**.
+        
+        **📌 Ogni step richiede il completamento del precedente.** Clicca **"▶️ Esegui Step X"** per avviare.
         """
     )
 
@@ -483,33 +508,69 @@ def render_overview_wizard_page() -> None:
             _run_wizard_step(4)
             st.rerun()
 
-    # Help section
+    # Help section - Prompt 9: Updated FAQ for HDBSCAN→Scoring flow
     with st.expander("❓ Domande Frequenti (FAQ)"):
         st.markdown(
             """
             **Q: Quanto tempo richiede l'analisi completa?**  
-            A: Circa 25-60 minuti totali, a seconda del volume di dati. Puoi seguire il progresso in tempo reale.
+            A: Circa 25-65 minuti totali, a seconda del volume di dati. Step 1 (5-7min), Step 2 (5-12min), Step 3 (10-30min), Step 4 (5-15min). Progresso visibile in tempo reale.
+            
+            **Q: Perché HDBSCAN prima del modello predittivo?**  
+            A: HDBSCAN cattura **pattern stabili** a livello cliente (mensile, FIFO, cardinalità tipica) che diventano **feature robuste** per il scoring fatture. Questo approccio combina interpretabilità (cluster visibili in UI) con performance predittiva.
+            
+            **Q: Cosa significa 'coerenza con pattern'?**  
+            A: L'agreement_score confronta il ranking del modello con la policy dominante del cliente (es. FIFO, largest). Badge verde = allineato, rosso = divergente. Aiuta a identificare anomalie comportamentali.
             
             **Q: I miei dati sono al sicuro?**  
             A: Sì, tutti i dati rimangono sul tuo computer/server. Niente viene inviato online.
             
             **Q: Serve conoscere il machine learning?**  
-            A: No, l'interfaccia è progettata per utenti business. I dettagli tecnici sono nascosti nei tooltip.
+            A: No, l'interfaccia è business-friendly. Dettagli tecnici sono opzionali (collapse "Dettagli Tecnici").
             
             **Q: Cosa succede se interrompo l'elaborazione?**  
-            A: Ogni step è idempotente: puoi ri-eseguirlo senza perdere progressi precedenti.
+            A: Ogni step è idempotente: puoi ri-eseguirlo senza perdere progressi. I file .parquet già generati non vengono sovrascritti inutilmente.
             
             **Q: Posso testare con dati di esempio?**  
-            A: Sì, attiva "Mock Mode" nella sidebar per usare un dataset di test pre-caricato.
+            A: Sì, attiva **"Mock Mode"** nella sidebar. Genera dataset sintetico (50 clienti, 12-18 mesi di storico) con il pulsante "📦 Crea dataset demo".
             
             **Q: Come interpreto i risultati?**  
-            A: Ogni pagina (Pattern Card, KPI Dashboard, Clusters) ha guide integrate e tooltip esplicativi.
+            A: Ogni pagina ha guide integrate:
+            - **Clusters:** Esplora gruppi comportamentali, clicca su punti per drill-down
+            - **Pattern Card:** Vedi ranking fatture + badge coerenza + SHAP top-3
+            - **KPI Dashboard:** Metriche globali (precision@k, calibrazione, uplift vs FIFO)
+            - **Policy IQ:** Confusion matrix policy classifier, uplift per cluster
+            
+            **Q: Quali modelli sono supportati?**  
+            A: CatBoost (primario, SHAP incluso) e AutoGluon (opzionale, no SHAP). Selezionabili via flag `--model catboost|autogluon` in CLI o radio button in Pattern Card.
+            
+            **Q: Posso esportare i risultati?**  
+            A: Sì, ogni pagina ha pulsante "Download CSV". Pattern Card ha anche "Scarica JSON Explain" con cluster/policy/SHAP.
             """
         )
 
-    # Footer
+    # Footer - Prompt 9: Deep-link CTAs
     st.markdown("---")
     st.caption(
-        "💡 **Suggerimento:** Inizia con 'Mock Mode' attivo per esplorare l'app con dati di esempio, "
-        "poi carica i tuoi dati SAP reali."
+        "💡 **Quick Start:** Attiva 'Mock Mode' nella sidebar → clicca '📦 Crea dataset demo' → esegui Step 1-4 → "
+        "esplora risultati in **Clusters** (segmenti) e **Pattern Card** (ranking + coerenza)."
     )
+    
+    # Deep-link shortcuts
+    st.markdown("### 🔗 Vai Direttamente a:")
+    link_cols = st.columns(4)
+    with link_cols[0]:
+        if st.button("📊 Clusters", use_container_width=True):
+            st.session_state["selected_page"] = "Clusters"
+            st.rerun()
+    with link_cols[1]:
+        if st.button("📈 Pattern Card", use_container_width=True):
+            st.session_state["selected_page"] = "Pattern Card"
+            st.rerun()
+    with link_cols[2]:
+        if st.button("🎯 KPI Dashboard", use_container_width=True):
+            st.session_state["selected_page"] = "KPI Dashboard"
+            st.rerun()
+    with link_cols[3]:
+        if st.button("🧪 Data Explorer", use_container_width=True):
+            st.session_state["selected_page"] = "Data Explorer"
+            st.rerun()

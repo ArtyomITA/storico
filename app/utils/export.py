@@ -126,12 +126,14 @@ def generate_event_explain_json(
                     pred_match.iloc[0].get("predicted_policy", pred_match.iloc[0].get("policy_pred", "n.d."))
                 )
     
-    # Cluster label
+    # Cluster label and dominant_policy (Prompt 11 extension)
     cluster_label = "n.d."
+    dominant_policy = "n.d."
     if clusters is not None:
         cluster_match = clusters[clusters["cliente"] == cliente]
         if not cluster_match.empty:
-            cluster_label = str(cluster_match.iloc[0].get("cluster_display", "n.d."))
+            cluster_label = str(cluster_match.iloc[0].get("cluster_display", cluster_match.iloc[0].get("cluster_label", "n.d.")))
+            dominant_policy = str(cluster_match.iloc[0].get("dominant_policy", "n.d."))
     
     # SHAP top-3
     shap_top3 = []
@@ -172,6 +174,7 @@ def generate_event_explain_json(
         "ranking_modello": ranking_modello,
         "ranking_policy": ranking_policy,
         "cluster_label": cluster_label,
+        "dominant_policy": dominant_policy,
         "shap_top3": shap_top3,
     }
 

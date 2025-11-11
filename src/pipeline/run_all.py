@@ -1,31 +1,21 @@
-"""Unified command to execute the full payment-pattern analytics pipeline."""
+"""Unified command to execute the full payment-pattern analytics pipeline.
+
+Prompt 8: Updated DAG order:
+normalize → features → embeddings → HDBSCAN → pattern profiles → training → scoring → analytics
+"""
 from __future__ import annotations
 
 import argparse
 import logging
 import os
+import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
 import pandas as pd
 
-from src.analytics import (
-    cluster_profile,
-    embedding_viz,
-    make_client_embeddings,
-    pattern_detectors,
-    rules_backtest,
-)
-from src.analytics import run_hdbscan as hdbscan_module
-from src.analytics.make_pattern_table import (
-    OUTPUT_PATH as PATTERN_OUTPUT,
-    build_pattern_table,
-)
-from src.data import ingest_multi
-from src.features import build_events, make_features, make_labels
-from src.models import train
-from src.report import make_report
 from src.utils.logging_setup import (
     configure_logging as setup_logging,
     get_current_log_file,
@@ -44,47 +34,39 @@ def _get_data_root() -> Path:
 CURATED_DIR = _get_data_root() / "curated"
 MODELS_DIR = Path("models")
 REPORTS_DIR = Path("reports")
-CRITICAL_FEATURE_COLUMNS: Tuple[str, ...] = (
-    "cliente",
-    "event_key",
-    "numero_documento",
-    "label",
-    "age_days",
-    "lag_reg_vs_doc",
-    "same_period",
-    "amt_ratio_B",
-    "amt_share_rank_event",
-    "docnum_delta_prev",
-    "weekly_cadence_client",
-    "eom_cadence_client",
-)
-_DATE_MISMATCH_THRESHOLD = 0.05
+LOGS_DIR = Path("logs")
 
-
-def _pct(numerator: int, denominator: int) -> float:
-    if denominator <= 0:
-        return 0.0
-    return round((numerator / denominator) * 100.0, 2)
+# Prompt 8: Pipeline steps in correct order
+PIPELINE_STEPS = [
+    "normalize",      # Prompt 2: SAP data normalization
+    "features",       # Prompt 3: Feature engineering
+    "embeddings",     # Prompt 4: Client embeddings (PCA/UMAP)
+    "hdbscan",        # Prompt 4: HDBSCAN clustering
+    "patterns",       # Prompt 5: Pattern detection
+    "train",          # Prompt 6: Model training
+    "score",          # Prompt 7: Invoice scoring
+    "analytics",      # KPI, calibration, policy metrics
+]
 
 
 @dataclass(frozen=True)
 class PipelineConfig:
-    """Configuration derived from CLI options."""
+    """Configuration derived from CLI options.
+    
+    Prompt 8: Idempotent pipeline with step flags.
+    """
 
-    input_patterns: Tuple[str, ...]
-    docmap_path: Optional[Path]
-    model: str
-    make_embeddings: bool
-    run_hdbscan: bool
-    embedding_neighbors: int
-    use_umap: bool
-    min_cluster_size: int
-    min_samples: int
-    make_kpi: bool
-    make_calibration: bool
-    make_policy_metrics: bool
-    step: Optional[str] # Single step execution
-    skip_validation: bool # Skip pre-training checks
+    steps: List[str]  # Steps to execute (default: all)
+    skip_normalize: bool
+    skip_features: bool
+    skip_embeddings: bool
+    skip_hdbscan: bool
+    skip_patterns: bool
+    skip_train: bool
+    skip_score: bool
+    skip_analytics: bool
+    model_type: str  # "catboost" or "autogluon"
+    log_level: str
 
 
 def parse_args(argv: Sequence[str] | None = None) -> PipelineConfig:
@@ -223,22 +205,24 @@ class PipelineRunner:
         self.project_root = Path(__file__).resolve().parents[2]
 
     def run(self) -> None:
- # Map step names to methods
+ # Map step names to methods - Prompt 8: Complete DAG with new modules
         step_registry: Dict[str, Tuple[str, Callable[[], object]]] = {
+            "normalize": ("Normalize SAP data (Prompt 2)", self.run_normalize_sap),
             "ingest": ("Ingest raw datasets", self.run_ingestion),
             "events": ("Build clearing events", self.run_build_events),
             "labels": ("Generate training labels", self.run_make_labels),
             "features": ("Engineer features & client profiles", self.run_make_features),
             "validate": ("Validate curated datasets", self.run_pretraining_validations),
-            "train": ("Train model & update champion", self.run_training),
-            "patterns": ("Compute pattern detectors", self.run_pattern_detectors),
-            "rules": ("Backtest policy rules", self.run_rules_backtest),
-            "table": ("Assemble pattern table", self.run_pattern_table),
-            "reports": ("Render pattern card reports", self.run_pattern_reports),
             "embeddings": ("Create client embeddings", self.run_make_embeddings),
             "projection": ("Compute embedding projection", self.run_embedding_projection),
             "hdbscan": ("Cluster embeddings with HDBSCAN", self.run_hdbscan),
+            "patterns": ("Compute pattern detectors (Prompt 5)", self.run_pattern_detectors),
+            "train": ("Train pointwise model (Prompt 6)", self.run_pointwise_trainer),
+            "score": ("Score open invoices (Prompt 7)", self.run_score_open_invoices),
             "clusters": ("Summarise clusters", self.run_cluster_profiles),
+            "rules": ("Backtest policy rules", self.run_rules_backtest),
+            "table": ("Assemble pattern table", self.run_pattern_table),
+            "reports": ("Render pattern card reports", self.run_pattern_reports),
             "kpi": ("Compute ranking KPIs", self.run_kpi_ranking),
             "calibration": ("Compute calibration diagnostics", self.run_calibration),
             "policy": ("Compute policy classifier metrics", self.run_policy_metrics),
@@ -253,34 +237,45 @@ class PipelineRunner:
             self._run_step(name, callback)
             return
         
-        # Full pipeline execution
-        steps: List[Tuple[str, Callable[[], object]]] = [
-            step_registry["ingest"],
-            step_registry["events"],
-            step_registry["labels"],
-            step_registry["features"],
-        ]
+        # Full pipeline execution - Prompt 8: normalize → features → embeddings → HDBSCAN → patterns → train → score → analytics
+        steps: List[Tuple[str, Callable[[], object]]] = []
+        
+        # Phase 1: Data preparation
+        steps.append(step_registry["normalize"])
+        steps.append(step_registry["ingest"])
+        steps.append(step_registry["events"])
+        steps.append(step_registry["labels"])
+        
+        # Phase 2: Feature engineering
+        steps.append(step_registry["features"])
         
         if not self.config.skip_validation:
             steps.append(step_registry["validate"])
         
-        steps.extend([
-            step_registry["train"],
-            step_registry["patterns"],
-            step_registry["rules"],
-            step_registry["table"],
-            step_registry["reports"],
-        ])
-
+        # Phase 3: Client segmentation (embeddings + HDBSCAN)
         if self.config.make_embeddings:
             steps.append(step_registry["embeddings"])
-
+        
         steps.append(step_registry["projection"])
-
+        
         if self.config.run_hdbscan:
             steps.append(step_registry["hdbscan"])
-
+        
         steps.append(step_registry["clusters"])
+        
+        # Phase 4: Pattern detection (Prompt 5)
+        steps.append(step_registry["patterns"])
+        
+        # Phase 5: Model training (Prompt 6)
+        steps.append(step_registry["train"])
+        
+        # Phase 6: Invoice scoring (Prompt 7)
+        steps.append(step_registry["score"])
+        
+        # Phase 7: Analytics artifacts
+        steps.append(step_registry["rules"])
+        steps.append(step_registry["table"])
+        steps.append(step_registry["reports"])
 
         if self.config.make_kpi:
             steps.append(step_registry["kpi"])
@@ -300,7 +295,21 @@ class PipelineRunner:
         except Exception as exc:  # pragma: no cover - defensive guard
             raise RuntimeError(f"Pipeline step '{name}' failed") from exc
 
-    # --- core steps -----------------------------------------------------------------
+    # --- core steps (Prompt 8: DAG order) -------------------------------------------
+
+    @log_timed("Normalize SAP data (Prompt 2)")
+    def run_normalize_sap(self) -> None:
+        """Execute src/data/normalize_sap.py to produce normalized/events.parquet."""
+        output_path = self.project_root / "data" / "normalized" / "events.parquet"
+        if output_path.exists():
+            LOGGER.info(f"Skipping normalize: {output_path} already exists")
+            return
+        
+        LOGGER.info("Running SAP normalization (Prompt 2)...")
+        from src.data import normalize_sap
+        
+        # Assume default paths; override with CLI args if needed
+        normalize_sap.main([])
 
     @log_timed("Ingest raw datasets")
     def run_ingestion(self) -> None:
@@ -519,22 +528,83 @@ class PipelineRunner:
         argv = ["--model", self.config.model]
         train.run(argv)
 
-    @log_timed("Compute pattern detectors")
+    @log_timed("Compute pattern detectors (Prompt 5)")
     def run_pattern_detectors(self) -> None:
- # Idempotent - check prerequisites
-        events_path = self.project_root / CURATED_DIR / "events.parquet"
-        if not events_path.exists():
-            LOGGER.warning(f"Prerequisite missing: {events_path}. Run 'events' step first.")
+        """Execute src/analytics/pattern_detectors.py to generate client_patterns.parquet."""
+        # Check prerequisites
+        profiles_path = self.project_root / CURATED_DIR / "client_profiles.parquet"
+        clusters_path = self.project_root / CURATED_DIR / "client_clusters.parquet"
+        
+        if not profiles_path.exists():
+            LOGGER.warning(f"Prerequisite missing: {profiles_path}. Run 'features' step first.")
             return
         
-        # Check output
-        output_path = self.project_root / CURATED_DIR / "client_pattern_scores.parquet"
+        # Check output (Prompt 5 produces client_patterns.parquet)
+        output_path = self.project_root / CURATED_DIR / "client_patterns.parquet"
         if output_path.exists():
             LOGGER.info(f"Pattern detectors already built: {output_path} exists")
             return
         
-        pattern_detectors.configure_logging()
-        pattern_detectors.main()
+        LOGGER.info("Running pattern detectors (Prompt 5)...")
+        from src.analytics import pattern_detectors
+        
+        pattern_detectors.main([])
+
+    @log_timed("Train pointwise model (Prompt 6)")
+    def run_pointwise_trainer(self) -> None:
+        """Execute src/training/pointwise_trainer.py to train CatBoost/AutoGluon."""
+        # Check prerequisites
+        features_path = self.project_root / CURATED_DIR / "train_features.parquet"
+        patterns_path = self.project_root / CURATED_DIR / "client_patterns.parquet"
+        
+        if not features_path.exists():
+            LOGGER.warning(f"Prerequisite missing: {features_path}. Run 'features' step first.")
+            return
+        if not patterns_path.exists():
+            LOGGER.warning(f"Prerequisite missing: {patterns_path}. Run 'patterns' step first.")
+            return
+        
+        # Check output (Prompt 6 produces champion.json)
+        champion_path = self.project_root / MODELS_DIR / "champion.json"
+        if champion_path.exists():
+            LOGGER.info(f"Model already trained: {champion_path} exists")
+            return
+        
+        LOGGER.info("Running pointwise trainer (Prompt 6)...")
+        from src.training import pointwise_trainer
+        
+        # Use model_type from config if available, otherwise default to catboost
+        model_arg = getattr(self.config, "model_type", "catboost")
+        pointwise_trainer.main(["--model", model_arg])
+
+    @log_timed("Score open invoices (Prompt 7)")
+    def run_score_open_invoices(self) -> None:
+        """Execute src/inference/score_open_invoices.py to generate predictions."""
+        # Check prerequisites
+        champion_path = self.project_root / MODELS_DIR / "champion.json"
+        patterns_path = self.project_root / CURATED_DIR / "client_patterns.parquet"
+        line_items_path = self.project_root / CURATED_DIR / "line_items.parquet"
+        
+        if not champion_path.exists():
+            LOGGER.warning(f"Prerequisite missing: {champion_path}. Run 'train' step first.")
+            return
+        if not patterns_path.exists():
+            LOGGER.warning(f"Prerequisite missing: {patterns_path}. Run 'patterns' step first.")
+            return
+        if not line_items_path.exists():
+            LOGGER.warning(f"Prerequisite missing: {line_items_path}. Run 'ingest' step first.")
+            return
+        
+        # Check output (Prompt 7 produces event_policy_predictions.parquet)
+        output_path = self.project_root / CURATED_DIR / "event_policy_predictions.parquet"
+        if output_path.exists():
+            LOGGER.info(f"Invoice scoring already completed: {output_path} exists")
+            return
+        
+        LOGGER.info("Running invoice scoring (Prompt 7)...")
+        from src.inference import score_open_invoices
+        
+        score_open_invoices.main([])
 
     @log_timed("Backtest policy rules")
     def run_rules_backtest(self) -> None:
