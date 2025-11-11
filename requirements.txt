@@ -1,10 +1,29 @@
-numpy>=1.24
+# Core Data Processing
+numpy>=1.26
 pandas>=2.0
 pyarrow>=14.0
+
+# Machine Learning - Core
 scikit-learn>=1.4
+scipy>=1.11
+
+# Machine Learning - Gradient Boosting
+catboost>=1.2
+lightgbm>=3.3.5
+xgboost>=2.0
+autogluon.tabular>=1.1.0  # Requires Python 3.9-3.12
+
+# Clustering & Embeddings
+hdbscan>=0.8.33
+umap-learn>=0.5.5
+
+# Visualization & UI
 streamlit>=1.35
 plotly>=5.20
-catboost>=1.2
-autogluon.tabular>=1.1.0
 rich>=13.0
-lightgbm>=3.3.5
+
+# Excel/SAP Data Import
+openpyxl>=3.1.0
+
+# Utilities
+python-dateutil>=2.8.2

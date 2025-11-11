@@ -318,3 +318,21 @@ def render_inline_glossary_icon(term_key: str) -> str:
     # Return markdown with info icon + tooltip
     # Future enhancement: make icon clickable to open glossary page
     return f" ℹ️"  # Placeholder for now, will be enhanced with st.help() or custom component
+
+
+# ================================================================================================
+# Policy Labels (Italian) - for Pattern Summary UI
+# ================================================================================================
+POLICY_LABELS_IT: Dict[str, str] = {
+    "fifo": "FIFO (Più Vecchio)",
+    "lifo": "LIFO (Più Recente)",
+    "largest": "Largest (Importo Max)",
+    "smallest": "Smallest (Importo Min)",
+    "same_period": "Stesso Periodo",
+    "eomfirst": "Fine Mese",
+    "regmonth": "Stesso Mese Registrazione",
+    "quarter": "Stesso Trimestre",
+    "seqblock": "Blocco Sequenziale",
+    "typeprio": "Priorità per Tipo",
+    "unknown": "Sconosciuto",
+}

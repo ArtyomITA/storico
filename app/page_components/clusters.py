@@ -478,22 +478,68 @@ def render_clusters_page(
     clients: Sequence[str],
     data_root_func: Any = None,  # Function to get data root (for mock mode)
 ) -> None:
-    st.title("🔬 Cluster Explorer — UX avanzata")
+    """
+    Render Clusters Explorer page with HDBSCAN visualization and drill-down.
     
- # Riquadro Azioni HDBSCAN
-    _render_hdbscan_actions_panel()
+    Prompt 2: Enhanced with file existence checks, interactive scatter plot,
+    and drill-down to Pattern Card.
+    """
+    st.title("🔬 Cluster Explorer — HDBSCAN Visualization")
+    
+    # ========================================================================
+    # Prompt 2: File Existence Checks with Fallback
+    # ========================================================================
+    curated_path = data_root_func() / "curated" if data_root_func and callable(data_root_func) else Path("data/curated")
+    
+    required_files = {
+        "clusters": curated_path / "client_clusters.parquet",
+        "embeddings_2d": curated_path / "client_embedding_2d.parquet",
+        "profiles": curated_path / "client_profiles.parquet",
+    }
+    
+    missing = [name for name, path in required_files.items() if not path.exists()]
+    
+    if "clusters" in missing or "embeddings_2d" in missing:
+        st.warning("⚠️ **Clustering HDBSCAN non ancora eseguito**")
+        st.info("""
+**Per visualizzare i cluster:**
 
+1. Vai su **Overview & Wizard** (nella sidebar)
+2. Completa **Step 2: Segmenta Clienti (HDBSCAN)**
+3. Torna qui per esplorare i risultati
+
+**File necessari:**
+- ❌ `client_clusters.parquet` (assegnazioni cliente → cluster)
+- ❌ `client_embedding_2d.parquet` (proiezione 2D per visualizzazione)
+
+**Oppure** usa il pannello Azioni HDBSCAN qui sotto per eseguire il clustering direttamente.
+        """)
+        
+        # Show HDBSCAN actions panel for direct execution
+        _render_hdbscan_actions_panel()
+        return
+    
+    # ========================================================================
+    # Load Data
+    # ========================================================================
     embeddings = tables.get("client_embedding_2d", pd.DataFrame())
     clusters = tables.get("client_clusters", pd.DataFrame())
     neighbors = tables.get("client_neighbors", pd.DataFrame())
     summaries = tables.get("cluster_summary", pd.DataFrame())
-    
-    # Load full embeddings for HDBSCAN recalculation if available
     embeddings_full = tables.get("client_embeddings", pd.DataFrame())
-
+    
     if embeddings.empty:
-        st.info("Proiezione 2D `client_embedding_2d.parquet` non disponibile.")
+        st.error("❌ `client_embedding_2d.parquet` non trovato")
+        st.info("Esegui Step 2 (HDBSCAN) nel wizard per generare gli embeddings 2D")
         return
+    
+    if clusters.empty:
+        st.error("❌ `client_clusters.parquet` non trovato")
+        st.info("Esegui Step 2 (HDBSCAN) nel wizard per generare i cluster")
+        return
+    
+ # Riquadro Azioni HDBSCAN
+    _render_hdbscan_actions_panel()
     
     # ========================================================================
     # Parametri HDBSCAN
@@ -909,12 +955,19 @@ def render_clusters_page(
                 )
             )
         st.plotly_chart(fig, width="stretch")
+        
+        # Prompt 2: Scatter plot click interaction hint
+        st.caption("💡 **Tip**: Hover sopra un punto per vedere dettagli cliente. Usa la lista clienti sotto per drill-down.")
 
-    st.subheader("Clienti nel cluster")
+    # ========================================================================
+    # Prompt 2: Client List with Drill-Down Buttons
+    # ========================================================================
+    st.subheader("📋 Esplora Clienti per Cluster")
+    
     if clusters.empty:
         st.info("Tabella `client_clusters.parquet` non disponibile.")
     elif selected_cluster is None:
-        st.info("Seleziona un cluster nella sidebar per vedere i clienti associati.")
+        st.info("💡 Seleziona un cluster nella sidebar per vedere i clienti associati.")
     else:
         cluster_clients = clusters[
             clusters["cluster_label_numeric"] == int(selected_cluster)
@@ -931,16 +984,73 @@ def render_clusters_page(
                 )[["cliente", "cluster_label", "membership_prob"]]
                 .sort_values("membership_prob", ascending=False)
             )
-            st.dataframe(display_df, width="stretch")
-            cluster_client_choice = st.selectbox(
-                "Seleziona un cliente nel cluster",
-                display_df["cliente"].tolist(),
-                key="cluster_page_client_select",
-            )
-            if st.button("Apri Pattern Card", key="cluster_page_open_pattern_card"):
-                st.session_state["selected_client"] = cluster_client_choice
-                st.session_state["selected_page"] = "Pattern Card"
-                _rerun_app()
+            
+            clients_in_cluster = display_df["cliente"].tolist()
+            st.write(f"**{len(clients_in_cluster)} clienti** in {_format_cluster_label(int(selected_cluster))}")
+            
+            # Prompt 2: Paginated list with drill-down buttons
+            clients_per_page = 20
+            total_pages = max(1, (len(clients_in_cluster) + clients_per_page - 1) // clients_per_page)
+            
+            page_col, summary_col = st.columns([0.3, 0.7])
+            
+            with page_col:
+                page = st.number_input(
+                    "Pagina",
+                    min_value=1,
+                    max_value=total_pages,
+                    value=1,
+                    key="cluster_clients_page",
+                    help=f"Mostra {clients_per_page} clienti per pagina"
+                )
+            
+            with summary_col:
+                st.info(f"📄 Pagina {page} di {total_pages} ({len(clients_in_cluster)} clienti totali)")
+            
+            start_idx = (page - 1) * clients_per_page
+            end_idx = min(start_idx + clients_per_page, len(clients_in_cluster))
+            
+            # Render clients with drill-down buttons
+            st.markdown("---")
+            for idx, cliente in enumerate(clients_in_cluster[start_idx:end_idx], start=start_idx + 1):
+                col1, col2, col3 = st.columns([0.1, 0.6, 0.3])
+                
+                with col1:
+                    st.caption(f"#{idx}")
+                
+                with col2:
+                    # Get membership probability for this client
+                    client_row = display_df[display_df["cliente"] == cliente]
+                    if not client_row.empty:
+                        prob = client_row.iloc[0]["membership_prob"]
+                        prob_badge = f"🎯 {prob:.2f}" if not np.isnan(prob) else "n.d."
+                    else:
+                        prob_badge = "n.d."
+                    
+                    st.markdown(f"**{cliente}** `{prob_badge}`")
+                
+                with col3:
+                    # Prompt 2 + Prompt 4: Drill-down button to Pattern Card with source tracking
+                    if st.button("🔍 Dettagli", key=f"drill_{cliente}_{selected_cluster}"):
+                        st.session_state["drill_cliente"] = cliente
+                        st.session_state["active_page"] = "Pattern Card"
+                        st.session_state["drill_source_page"] = "Clusters"  # Prompt 4: Track source
+                        st.rerun()
+            
+            st.markdown("---")
+            
+            # Quick jump selector (alternative to pagination)
+            with st.expander("⚡ Vai rapidamente a un cliente specifico"):
+                cluster_client_choice = st.selectbox(
+                    "Seleziona cliente",
+                    display_df["cliente"].tolist(),
+                    key="cluster_page_client_select",
+                )
+                if st.button("📊 Apri Pattern Card", key="cluster_page_open_pattern_card"):
+                    st.session_state["drill_cliente"] = cluster_client_choice
+                    st.session_state["active_page"] = "Pattern Card"
+                    st.session_state["drill_source_page"] = "Clusters"  # Prompt 4: Track source
+                    st.rerun()
 
     st.subheader("Clienti vicini")
     if neighbors.empty:

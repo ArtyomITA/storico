@@ -13,6 +13,301 @@ import streamlit as st
 
 LOGGER = logging.getLogger(__name__)
 
+# Project root detection
+CURRENT_DIR = Path(__file__).resolve().parent
+PROJECT_ROOT = CURRENT_DIR.parent.parent
+
+
+# ================================================================================================
+# Pipeline Initialization Check - Prompt 1: Cold Start Support
+# ================================================================================================
+
+def check_pipeline_initialization() -> Dict[str, Any]:
+    """Check if pipeline has been initialized with data.
+    
+    Returns:
+        Dict with keys:
+        - initialized (bool): True if data files exist
+        - source (str): "none" | "mock" | "real"
+        - missing_files (List[str]): List of missing required files
+        - has_raw (bool): True if raw data directory has files
+    """
+    # Determine data root based on mock_mode
+    if st.session_state.get("mock_mode"):
+        data_root = PROJECT_ROOT / "data_mock"
+        source_hint = "mock"
+    else:
+        data_root = PROJECT_ROOT / "data"
+        source_hint = "real"
+    
+    curated_dir = data_root / "curated"
+    raw_dir = data_root / "raw"
+    
+    # Check required files
+    required_files = ["line_items.parquet", "events.parquet"]
+    missing_files = []
+    
+    for filename in required_files:
+        file_path = curated_dir / filename
+        if not file_path.exists():
+            missing_files.append(filename)
+    
+    # Check if raw directory has files
+    has_raw = False
+    if raw_dir.exists():
+        raw_files = list(raw_dir.glob("*.xlsx")) + list(raw_dir.glob("*.csv"))
+        raw_files += list((raw_dir / "uploads").glob("*.xlsx")) if (raw_dir / "uploads").exists() else []
+        has_raw = len(raw_files) > 0
+    
+    # Determine initialization status
+    initialized = len(missing_files) == 0
+    source = source_hint if initialized else "none"
+    
+    return {
+        "initialized": initialized,
+        "source": source,
+        "missing_files": missing_files,
+        "has_raw": has_raw,
+    }
+
+
+# ================================================================================================
+# Mock Data Generation Flow - Prompt 1: Auto-generate + ingest synthetic data
+# ================================================================================================
+
+def generate_mock_data_flow() -> None:
+    """Generate synthetic data and run normalization automatically."""
+    with st.spinner("🎭 Generazione dataset sintetico..."):
+        try:
+            # 1. Run mock data generator
+            result = subprocess.run(
+                [sys.executable, "-m", "scripts.make_mock_data"],
+                cwd=str(PROJECT_ROOT),
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+            
+            if result.returncode != 0:
+                st.error(f"❌ Errore generazione mock: {result.stderr}")
+                LOGGER.error(f"Mock data generation failed: {result.stderr}")
+                return
+            
+            # 2. Check if mock file was created
+            mock_file = PROJECT_ROOT / "data_mock" / "raw" / "sap_mock.xlsx"
+            if not mock_file.exists():
+                st.error("❌ File mock non trovato dopo generazione")
+                LOGGER.error(f"Mock file not found at {mock_file}")
+                return
+            
+            st.success("✅ Dataset sintetico generato!")
+            
+        except subprocess.TimeoutExpired:
+            st.error("❌ Timeout generazione mock (>120s)")
+            return
+        except Exception as exc:
+            st.error(f"❌ Errore imprevisto: {exc}")
+            LOGGER.exception("Error generating mock data")
+            return
+    
+    # 3. Auto-run ingestion on generated mock file
+    with st.spinner("📥 Ingestion dataset sintetico..."):
+        try:
+            from src.data import ingest_multi
+            
+            output_path = PROJECT_ROOT / "data_mock" / "curated" / "line_items.parquet"
+            docmap_path = PROJECT_ROOT / "data_mock" / "curated" / "docmap.parquet"
+            
+            cli_args = [
+                "--input", str(mock_file),
+                "--output", str(output_path),
+                "--docmap", str(docmap_path),
+            ]
+            
+            ingest_multi.run(cli_args)
+            
+            st.success("✅ Ingestion completata!")
+            
+        except Exception as exc:
+            st.error(f"❌ Errore ingestion: {exc}")
+            LOGGER.exception("Error ingesting mock data")
+            return
+    
+    # 4. Update session state
+    st.session_state["pipeline_initialized"] = True
+    st.session_state["data_source"] = "mock"
+    st.session_state["mock_mode"] = True
+    
+    st.success("✅ Dataset demo pronto! Procedi allo Step 1.")
+    st.balloons()
+    st.rerun()
+
+
+# ================================================================================================
+# Real Data Ingestion Flow - Prompt 1: Upload + ingest real SAP files
+# ================================================================================================
+
+def ingest_real_data_flow(uploaded_files: List) -> None:
+    """Ingest real SAP Excel files uploaded by user.
+    
+    Args:
+        uploaded_files: List of UploadedFile objects from st.file_uploader
+    """
+    if not uploaded_files:
+        st.warning("⚠️ Nessun file selezionato")
+        return
+    
+    # Save uploaded files to raw/uploads
+    raw_dir = PROJECT_ROOT / "data" / "raw" / "uploads"
+    raw_dir.mkdir(parents=True, exist_ok=True)
+    
+    saved_paths = []
+    for uploaded in uploaded_files:
+        target = raw_dir / uploaded.name
+        target.write_bytes(uploaded.getbuffer())
+        saved_paths.append(target)
+        LOGGER.info(f"Saved uploaded file: {target}")
+    
+    st.info(f"📁 Salvati {len(saved_paths)} file in {raw_dir}")
+    
+    # Run ingestion
+    with st.spinner(f"📥 Ingestion di {len(saved_paths)} file..."):
+        try:
+            from src.data import ingest_multi
+            
+            cli_args = ["--input"] + [str(p) for p in saved_paths]
+            cli_args += [
+                "--output", str(PROJECT_ROOT / "data" / "curated" / "line_items.parquet"),
+                "--docmap", str(PROJECT_ROOT / "data" / "curated" / "docmap.parquet"),
+            ]
+            
+            ingest_multi.run(cli_args)
+            
+            st.success(f"✅ Ingestion completata: {len(saved_paths)} file")
+            
+        except Exception as exc:
+            st.error(f"❌ Errore ingestion: {exc}")
+            LOGGER.exception("Error ingesting real data")
+            return
+    
+    # Update session state
+    st.session_state["pipeline_initialized"] = True
+    st.session_state["data_source"] = "real"
+    st.session_state["mock_mode"] = False
+    
+    st.balloons()
+    st.rerun()
+
+
+# ================================================================================================
+# Welcome Screen (Cold Start) - Prompt 1: Guide user to initialize pipeline
+# ================================================================================================
+
+def render_welcome_screen() -> None:
+    """Render welcome screen for cold start (no data loaded yet)."""
+    st.title("🚀 Inizia la tua Analisi Intelligente dei Pagamenti")
+    
+    st.markdown(
+        """
+        Benvenuto nel sistema di analisi predittiva delle **partite aperte**! 
+        
+        Prima di procedere con l'analisi, dobbiamo caricare i dati SAP. 
+        Scegli una delle opzioni qui sotto per iniziare.
+        """
+    )
+    
+    st.markdown("---")
+    
+    # Two-column layout for options
+    col1, col2 = st.columns(2)
+    
+    # Option A: Mock Data (Demo)
+    with col1:
+        st.markdown("### 🎭 Dataset Demo (Mock)")
+        
+        st.markdown(
+            """
+            **Perfetto per:**
+            - Test e demo rapide
+            - Familiarizzare con il sistema
+            - Training team
+            
+            **Cosa include:**
+            - 50 clienti sintetici
+            - 12-18 mesi di storico
+            - Pattern realistici (FIFO, LIFO, EOM, etc.)
+            - Dati completi per tutti gli step
+            """
+        )
+        
+        if st.button("📦 Genera Dataset Demo", use_container_width=True, type="primary"):
+            generate_mock_data_flow()
+    
+    # Option B: Real Data (Upload SAP files)
+    with col2:
+        st.markdown("### 📁 Carica Dati SAP Reali")
+        
+        st.markdown(
+            """
+            **Perfetto per:**
+            - Analisi produzione
+            - Report esecutivi
+            - Decisioni di credito
+            
+            **Formati supportati:**
+            - Excel (.xlsx)
+            - CSV (.csv)
+            - Tabelle SAP: BSID, BSAD
+            """
+        )
+        
+        uploaded_files = st.file_uploader(
+            "Seleziona file SAP (.xlsx o .csv)",
+            type=["xlsx", "csv"],
+            accept_multiple_files=True,
+            key="sap_uploader_welcome",
+        )
+        
+        if st.button("📥 Avvia Ingestion", use_container_width=True, type="primary", disabled=not uploaded_files):
+            ingest_real_data_flow(uploaded_files)
+    
+    # Progress indicator
+    st.markdown("---")
+    st.markdown("### 📊 Stato Pipeline")
+    
+    init_status = check_pipeline_initialization()
+    
+    if init_status["initialized"]:
+        st.success("✅ Dati caricati e pronti")
+        st.info(f"📂 Fonte dati: **{init_status['source']}**")
+    elif init_status["has_raw"]:
+        st.warning("⏳ File raw presenti ma non processati. Clicca 'Avvia Ingestion' per procedere.")
+    else:
+        st.info("⏳ In attesa di dati. Seleziona un'opzione qui sopra per iniziare.")
+    
+    # Help section
+    with st.expander("❓ Serve aiuto?"):
+        st.markdown(
+            """
+            **Q: Qual è la differenza tra Mock e Real?**  
+            A: Mock genera dati sintetici per test/demo. Real usa i tuoi file SAP effettivi per analisi produzione.
+            
+            **Q: Quanto tempo richiede la generazione mock?**  
+            A: Circa 30-60 secondi per generare + ingest automatico.
+            
+            **Q: Posso caricare più file SAP?**  
+            A: Sì, seleziona tutti i file insieme (BSID, BSAD, etc.) e clicca "Avvia Ingestion". 
+            Verranno consolidati automaticamente.
+            
+            **Q: I dati vengono inviati online?**  
+            A: No, tutto rimane locale. Nessun dato lascia il tuo computer/server.
+            
+            **Q: Come verifico se i dati sono stati caricati?**  
+            A: La sezione "Stato Pipeline" qui sotto mostra lo stato in tempo reale. 
+            Vedrai ✅ verde quando i dati sono pronti.
+            """
+        )
+
 
 # ================================================================================================
 # SAP Business Glossary - Pillole per utenti business
@@ -330,6 +625,13 @@ def _render_wizard_step_card(step: Dict[str, Any], step_completion: Dict[str, An
             f"{step_completion['completed_count']}/{step_completion['total_count']} file completati. "
             f"Mancanti: {', '.join(step_completion['missing_files'])}"
         )
+    
+    # Prompt 1: Visual feedback for missing files
+    if step_completion["missing_files"]:
+        with st.expander("❌ File Mancanti - Clicca per dettagli"):
+            for missing_file in step_completion["missing_files"]:
+                st.markdown(f"- ❌ `{missing_file}`")
+            st.caption("💡 Esegui questo step per generare i file mancanti.")
 
     # Main description
     st.markdown(step["description"])
@@ -384,6 +686,14 @@ def _render_wizard_step_card(step: Dict[str, Any], step_completion: Dict[str, An
 
 def render_overview_wizard_page() -> None:
     """Render Prompt 9 Overview & Wizard page - HDBSCAN→Scoring flow in 4 business-friendly steps."""
+
+    # Prompt 1: Check pipeline initialization status
+    init_status = check_pipeline_initialization()
+    
+    if not init_status["initialized"]:
+        # Show cold start welcome screen if data not ready
+        render_welcome_screen()
+        return
 
     # Hero section
     st.title("🏠 Benvenuto nell'Analisi Intelligente dei Pagamenti")
@@ -473,9 +783,17 @@ def render_overview_wizard_page() -> None:
     # Check completion status for all steps
     step_statuses = [_check_step_completion(i + 1) for i in range(4)]
 
-    # Overall progress
-    total_progress = sum(s["progress"] for s in step_statuses) / 4
-    st.progress(total_progress, text=f"Progresso complessivo: {int(total_progress * 100)}%")
+    # Prompt 1: Add refresh button to re-check files
+    col_progress, col_refresh = st.columns([0.85, 0.15])
+    
+    with col_progress:
+        # Overall progress
+        total_progress = sum(s["progress"] for s in step_statuses) / 4
+        st.progress(total_progress, text=f"Progresso complessivo: {int(total_progress * 100)}%")
+    
+    with col_refresh:
+        if st.button("🔄 Verifica File", help="Aggiorna lo stato dei file di output", use_container_width=True):
+            st.rerun()
 
     st.markdown("---")
 

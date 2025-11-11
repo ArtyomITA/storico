@@ -34,7 +34,7 @@ from src.analytics.pattern_detectors import POLICY_NAMES, infer_pattern_label
 from src.report.nlg_patterns import render_pattern_summary  # NLG text summary (different from page render)
 from src.utils.logging_setup import get_current_log_file, log_timed
 
-st.set_page_config(page_title="Pattern Card", page_icon="📊", layout="wide")
+st.set_page_config(page_title="Storico Analytics", page_icon="📊", layout="wide")
 
 LOGGER = logging.getLogger(__name__)
 
@@ -1644,6 +1644,17 @@ def render_pattern_card(
 
 
 def main() -> None:
+    # ========================================================================
+    # Prompt 4: Session State Initialization
+    # ========================================================================
+    # Initialize core session state keys if not present
+    if "selected_page" not in st.session_state:
+        st.session_state["selected_page"] = "Overview & Wizard"
+    if "mock_mode" not in st.session_state:
+        st.session_state["mock_mode"] = False
+    if "pipeline_initialized" not in st.session_state:
+        st.session_state["pipeline_initialized"] = False
+    
  # Mock mode badge in header
     if st.session_state.get("mock_mode"):
         st.markdown(
@@ -1935,14 +1946,42 @@ def main() -> None:
 - [Medium: AutoGluon Tabular](https://medium.com/tag/autogluon)
 - [HDBSCAN Docs](https://hdbscan.readthedocs.io)
             """)
-
+    
+    # ========================================
+    # Page selector BEFORE data loading
+    # ========================================
+    page = st.sidebar.radio("Pagina", PAGE_OPTIONS, key="selected_page")
+    
+    # ========================================
+    # Pages that DON'T require events.parquet
+    # ========================================
+    if page == "Overview & Wizard":
+        render_overview_wizard_page()
+        return
+    
+    if page == "Overview & Pipeline":
+        render_pipeline_overview_page()
+        return
+    
+    # ========================================
+    # Load data for all other pages
+    # ========================================
     tables, missing = load_curated_tables()
     if missing:
         st.sidebar.warning("File mancanti: " + ", ".join(missing))
 
     events = tables.get("events", pd.DataFrame())
     if events.empty:
-        st.error("Il file events.parquet è necessario per utilizzare la dashboard.")
+        # No data: guide user to Overview & Wizard
+        st.error("❌ Il file events.parquet è necessario per utilizzare questa pagina.")
+        st.info(
+            "💡 **Come iniziare:**\n\n"
+            "1. Vai alla pagina **Overview & Wizard** (nella sidebar)\n"
+            "2. Genera dati demo oppure carica i tuoi file SAP\n"
+            "3. Torna qui dopo aver completato l'ingestion"
+        )
+        st.markdown("---")
+        st.markdown("**👉 [Clicca qui per andare a Overview & Wizard](/?page=Overview%20%26%20Wizard)**")
         st.stop()
 
     event_items = tables.get("event_items", pd.DataFrame())
@@ -1954,47 +1993,57 @@ def main() -> None:
 
     feature_repository, cat_feature_cols, cat_cat_indices, auto_feature_cols = load_feature_repository()
 
-    clients = sorted(events["cliente"].dropna().astype(str).unique())
+    # Build clients list (handle empty events case in mock mode)
+    if not events.empty:
+        clients = sorted(events["cliente"].dropna().astype(str).unique())
+    else:
+        clients = []
+    
+    # Initialize developer metrics early (needed for all pages)
+    developer_metrics: Dict[str, Any] = {"sections": [], "dataframes": {}}
+    
+    # If no clients, show error and guide user
     if not clients:
-        st.error("Nessun cliente disponibile negli eventi.")
+        st.error("❌ Nessun cliente disponibile negli eventi.")
+        st.info(
+            "💡 **Come iniziare:**\n"
+            "1. Vai alla pagina **Overview & Wizard** per generare dati demo o caricare file SAP\n"
+            "2. Oppure attiva **Mock mode** nella sidebar e clicca **📦 Crea dataset demo**"
+        )
         st.stop()
 
- # Check if drill-down from Pattern Summary is active
+    # ========================================================================
+    # Prompt 4: Drill-Down Router with Source Page Tracking
+    # ========================================================================
+    drill_active = False
+    drill_source_page = None
+    
     if "drill_cliente" in st.session_state and "active_page" in st.session_state:
         drill_cliente = st.session_state["drill_cliente"]
         target_page = st.session_state["active_page"]
+        drill_source_page = st.session_state.get("drill_source_page", "Pattern Summary")  # Default for backward compat
         
         # Validate drill cliente exists in current dataset
         if drill_cliente in clients:
             # Set selected_client and page for drill-down
             st.session_state["selected_client"] = drill_cliente
             
-            # Clear drill-down state (so it doesn't persist)
-            del st.session_state["drill_cliente"]
-            del st.session_state["active_page"]
+            # Force page to target
+            page = target_page
+            drill_active = True
             
-            # Force page to Pattern Card
-            page = "Pattern Card"
-            st.sidebar.info(f"🔗 Drill-down attivo: Cliente **{drill_cliente}** dalla Pattern Summary")
+            # Show drill-down indicator in sidebar
+            source_icon = "🔬" if drill_source_page == "Clusters" else "📊"
+            st.sidebar.info(f"🔗 **Drill-down attivo**\n\nCliente: **{drill_cliente}**\n\nDa: {source_icon} {drill_source_page}")
         else:
             # Invalid drill cliente, clear state
             st.warning(f"⚠️ Cliente drill-down '{drill_cliente}' non trovato nel dataset corrente.")
             del st.session_state["drill_cliente"]
             del st.session_state["active_page"]
-    else:
-        page = st.sidebar.radio("Pagina", PAGE_OPTIONS, key="selected_page")
+            if "drill_source_page" in st.session_state:
+                del st.session_state["drill_source_page"]
     
- # Overview & Wizard page (homepage, CEO-friendly)
-    if page == "Overview & Wizard":
-        render_overview_wizard_page()
-        return
-    
- # Overview & Pipeline page (developer-focused)
-    if page == "Overview & Pipeline":
-        render_pipeline_overview_page()
-        return
-    
- # Pattern Summary page (drill-down to Pattern Card)
+    # Pattern Summary page (drill-down to Pattern Card)
     if page == "Pattern Summary":
         @_section_tracker(developer_metrics, "UI.PatternSummary")
         def _render_pattern_summary_wrapper() -> None:
@@ -2022,7 +2071,6 @@ def main() -> None:
         help="Regmonth = 'stesso mese di registrazione', non 'pagato tutto il mese'. Attiva per escludere da grafici/metriche."
     )
 
-    developer_metrics: Dict[str, Any] = {"sections": [], "dataframes": {}}
 
     if page == "KPI Dashboard":
         @_section_tracker(developer_metrics, "UI.KPI_Dashboard")
@@ -2081,6 +2129,33 @@ def main() -> None:
             _render_developer_panel(developer_metrics)
         return
 
+    # ========================================================================
+    # Prompt 4: Breadcrumb Navigation for Drill-Down Mode
+    # ========================================================================
+    if drill_active and drill_source_page:
+        # Show breadcrumb to return to source page
+        st.markdown("---")
+        breadcrumb_col1, breadcrumb_col2 = st.columns([0.3, 0.7])
+        
+        with breadcrumb_col1:
+            if st.button(f"← Torna a {drill_source_page}", key="drill_back_button", type="secondary"):
+                # Clear drill-down state
+                if "drill_cliente" in st.session_state:
+                    del st.session_state["drill_cliente"]
+                if "active_page" in st.session_state:
+                    del st.session_state["active_page"]
+                if "drill_source_page" in st.session_state:
+                    del st.session_state["drill_source_page"]
+                
+                # Navigate back to source page
+                st.session_state["selected_page"] = drill_source_page
+                st.rerun()
+        
+        with breadcrumb_col2:
+            st.caption(f"📍 Navigazione: {drill_source_page} → Pattern Card (Cliente: {selected_client})")
+        
+        st.markdown("---")
+
     # Use Pattern Card v2 (refactored 2-column layout + explainability)
     @_section_tracker(developer_metrics, "UI.PatternCard_v2")
     def _render_pattern_card_v2() -> None:
@@ -2098,6 +2173,13 @@ def main() -> None:
         )
     
     _render_pattern_card_v2()
+
+    # Prompt 4: Clear drill-down state after Pattern Card renders
+    # (State needed during render, but should be cleared after to prevent persistence)
+    if drill_active:
+        # Keep state for this render, but mark for cleanup on next interaction
+        # User can navigate back via breadcrumb or sidebar
+        pass
 
     if developer_mode:
         developer_metrics["logs"] = _load_warning_log_records()

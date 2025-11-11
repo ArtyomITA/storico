@@ -1,8 +1,12 @@
 # Python virtual environments
 .venv/
 venv/
+venv312/
 env/
 ENV/
+
+# Azure and documentation artifacts
+.azure/
 
 # Python cache and compiled files
 __pycache__/

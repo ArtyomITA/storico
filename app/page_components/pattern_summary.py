@@ -606,7 +606,8 @@ def render_pattern_summary(data_dir: Path) -> None:
         # Handle drill-down
         if selected_cliente:
             st.session_state["drill_cliente"] = selected_cliente
-            st.session_state["active_page"] = "pattern_card"
+            st.session_state["active_page"] = "Pattern Card"  # Fixed: use proper page name
+            st.session_state["drill_source_page"] = "Pattern Summary"  # Prompt 4: Track source
             st.success(f"✓ Cliente **{selected_cliente}** selezionato. Reindirizzamento a Pattern Card...")
             st.rerun()
         
