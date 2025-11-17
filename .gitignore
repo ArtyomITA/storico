@@ -87,12 +87,17 @@ logs/
 logs/*.jsonl
 
 # Data - Raw and curated
+data/raw/
 data/raw/*.csv
 data/raw/*.xlsx
 data/curated/
 data/curated/*.parquet
 data/curated/*.json
 data/curated/*.csv
+
+# Data mock - Raw and curated
+data_mock/raw/
+data_mock/curated/
 
 # Models - All trained models and artifacts
 models/

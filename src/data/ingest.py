@@ -80,7 +80,8 @@ DATE_COLUMNS = [
     "data_registrazione",
     "data_documento",
     "data_acquisizione",
-    "data_base_pagamento",  # Added ]
+    "data_base_pagamento",
+]
 
 AMOUNT_COLUMNS = ["imp_div_int", "importo_raw"]  # Primary + fallback
 

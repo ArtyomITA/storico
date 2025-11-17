@@ -1648,10 +1648,8 @@ def main() -> None:
     # Prompt 4: Session State Initialization
     # ========================================================================
     # Initialize core session state keys if not present
-    if "selected_page" not in st.session_state:
-        st.session_state["selected_page"] = "Overview & Wizard"
-    if "mock_mode" not in st.session_state:
-        st.session_state["mock_mode"] = False
+    # Note: selected_page is controlled by widget (radio button), don't initialize it here
+    # Note: mock_mode is controlled by widget in sidebar, don't initialize it here
     if "pipeline_initialized" not in st.session_state:
         st.session_state["pipeline_initialized"] = False
     
@@ -1668,15 +1666,15 @@ def main() -> None:
     
  # Deep-link restore - parse query params at startup
     qp = st.query_params
-    if "page" in qp and "selected_page" not in st.session_state:
-        st.session_state["selected_page"] = qp["page"]
     if "cliente" in qp and "selected_client" not in st.session_state:
         st.session_state["selected_client"] = qp["cliente"]
     
     with st.sidebar.expander("📤 Dati", expanded=False):
+        # Set default based on data source
+        default_mock = st.session_state.get("data_source") == "mock"
         mock_mode = st.checkbox(
             "Usa Mock mode (isola i file)",
-            value=False,
+            value=default_mock,
             key="mock_mode",
             help="Se attivo, i file caricati vengono salvati in data_mock/raw/uploads e gli output in data_mock/curated.",
         )
@@ -1760,7 +1758,12 @@ def main() -> None:
                     with st.spinner("Esecuzione ingest..."):
                         ingest_multi.run(cli_args)
                 except Exception as exc:  # pragma: no cover - runtime feedback
+                    # Cleanup orphaned files on failure
+                    for path in saved_paths:
+                        if path.exists():
+                            path.unlink()
                     st.error(f"Ingest fallita: {exc}")
+                    st.warning(f"⚠️ File caricati rimossi a causa dell'errore ({len(saved_paths)} file)")
                 else:
                     st.session_state["ingest_notice"] = f"Ingest completata: {len(saved_paths)} file"
                     st.experimental_rerun()
@@ -1950,7 +1953,16 @@ def main() -> None:
     # ========================================
     # Page selector BEFORE data loading
     # ========================================
-    page = st.sidebar.radio("Pagina", PAGE_OPTIONS, key="selected_page")
+    # Check query params for page navigation
+    qp = st.query_params
+    default_page_index = 0
+    if "page" in qp:
+        try:
+            default_page_index = PAGE_OPTIONS.index(qp["page"])
+        except (ValueError, KeyError):
+            default_page_index = 0
+    
+    page = st.sidebar.radio("Pagina", PAGE_OPTIONS, index=default_page_index, key="selected_page")
     
     # ========================================
     # Pages that DON'T require events.parquet

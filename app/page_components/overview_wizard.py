@@ -6,6 +6,7 @@ import logging
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -43,8 +44,9 @@ def check_pipeline_initialization() -> Dict[str, Any]:
     curated_dir = data_root / "curated"
     raw_dir = data_root / "raw"
     
-    # Check required files
-    required_files = ["line_items.parquet", "events.parquet"]
+    # Check required files - only line_items.parquet is needed after ingestion
+    # events.parquet is created by build_events step
+    required_files = ["line_items.parquet"]
     missing_files = []
     
     for filename in required_files:
@@ -136,9 +138,10 @@ def generate_mock_data_flow() -> None:
     # 4. Update session state
     st.session_state["pipeline_initialized"] = True
     st.session_state["data_source"] = "mock"
-    st.session_state["mock_mode"] = True
+    st.session_state["success_message"] = "✅ Dataset demo pronto! Attiva 'Mock mode' nella sidebar."
+    # Note: mock_mode is controlled by widget, user needs to toggle it manually
     
-    st.success("✅ Dataset demo pronto! Procedi allo Step 1.")
+    LOGGER.info("Mock data generation completed successfully")
     st.balloons()
     st.rerun()
 
@@ -186,15 +189,22 @@ def ingest_real_data_flow(uploaded_files: List) -> None:
             st.success(f"✅ Ingestion completata: {len(saved_paths)} file")
             
         except Exception as exc:
+            # Cleanup orphaned files on failure
+            for path in saved_paths:
+                if path.exists():
+                    path.unlink()
             st.error(f"❌ Errore ingestion: {exc}")
+            st.warning(f"⚠️ File caricati rimossi a causa dell'errore ({len(saved_paths)} file)")
             LOGGER.exception("Error ingesting real data")
             return
     
     # Update session state
     st.session_state["pipeline_initialized"] = True
     st.session_state["data_source"] = "real"
-    st.session_state["mock_mode"] = False
+    st.session_state["success_message"] = f"✅ Ingestion completata: {len(saved_paths)} file processati"
+    # Note: mock_mode is controlled by widget, don't set it directly
     
+    LOGGER.info(f"Ingestion completed successfully: {len(saved_paths)} files")
     st.balloons()
     st.rerun()
 
@@ -242,6 +252,8 @@ def render_welcome_screen() -> None:
         
         if st.button("📦 Genera Dataset Demo", use_container_width=True, type="primary"):
             generate_mock_data_flow()
+            # generate_mock_data_flow calls st.rerun(), execution should stop here
+            st.stop()
     
     # Option B: Real Data (Upload SAP files)
     with col2:
@@ -270,6 +282,8 @@ def render_welcome_screen() -> None:
         
         if st.button("📥 Avvia Ingestion", use_container_width=True, type="primary", disabled=not uploaded_files):
             ingest_real_data_flow(uploaded_files)
+            # ingest_real_data_flow calls st.rerun(), execution should stop here
+            st.stop()
     
     # Progress indicator
     st.markdown("---")
@@ -357,124 +371,287 @@ SAP_GLOSSARY = {
 # Wizard Step Definitions
 # ================================================================================================
 
-# Prompt 9: Updated wizard steps aligned with HDBSCAN→Scoring flow
+# Prompt 9: CORRECT ORDER - HDBSCAN BEFORE TRAIN (cluster priors as features!)
 WIZARD_STEPS = [
+    # === DATA PREPARATION GROUP ===
     {
         "id": 1,
-        "title": "📥 Carica Dati SAP",
-        "subtitle": "Importa e normalizza le partite aperte",
+        "title": "📥 Ingest SAP Data",
+        "subtitle": "Carica e normalizza dati grezzi SAP",
         "description": (
-            "**Cosa succede:** Leggiamo i dati delle fatture dal tuo sistema SAP e li organizziamo "
-            "in un formato pulito e pronto per l'analisi.\n\n"
-            "**Cosa ottieni:** Una tabella con tutte le partite aperte, i pagamenti ricevuti, e le informazioni "
-            "sui clienti (chi ha pagato cosa, quando, e quanto)."
+            "**Cosa succede:** Importiamo i file SAP (BSAD, BSID) e li normalizziamo in uno schema standard.\n\n"
+            "**Cosa ottieni:** File `line_items.parquet` con tutte le righe documento pulite e validate."
         ),
-        "business_value": (
-            "💡 **Valore Business:** Trasformiamo i dati grezzi SAP (spesso dispersi in tabelle diverse) "
-            "in una vista unificata e comprensibile. È come mettere ordine in un archivio cartaceo."
-        ),
-        "sap_pills": ["partite_aperte", "pareggio", "data_documento"],
-        "technical_details": (
-            "**Dettagli Tecnici:**\n"
-            "- Normalizzazione SAP: mapping colonne (BSAD, BSID) → schema contrattuale\n"
-            "- Validazioni: cliente non nullo, date coerenti, importi ≥0\n"
-            "- Genera `line_items.parquet`, `events.parquet`, `event_items.parquet`\n"
-            "- Engine: Pandas + Pyarrow per performance\n"
-            "- CLI: `python -m src.data.normalize_sap` (Prompt 2)"
-        ),
-        "pipeline_steps": ["normalize", "ingest", "events", "labels", "features"],
-        "output_files": ["line_items.parquet", "events.parquet", "event_items.parquet", "train_features.parquet", "client_profiles.parquet"],
-        "estimated_time": "3-7 minuti",
+        "business_value": "💡 Fondamento: dati SAP trasformati in formato analitico.",
+        "sap_pills": ["partite_aperte"],
+        "technical_details": "Gestito dall'upload nella welcome screen - eseguito automaticamente.",
+        "pipeline_steps": [],  # Already done in welcome screen
+        "output_files": ["line_items.parquet", "docmap.parquet"],
+        "estimated_time": "Completato",
         "link_page": "Data Explorer",
     },
     {
         "id": 2,
-        "title": "🧩 Segmenta Clienti (HDBSCAN)",
-        "subtitle": "Identifica gruppi di pagamento simili",
+        "title": "🔄 Build Events",
+        "subtitle": "Costruisci eventi di pagamento da line items",
         "description": (
-            "**Cosa succede:** Analizziamo lo storico di ogni cliente per identificare **pattern stabili**: "
-            "chi paga sempre a fine mese, chi è settimanale, chi è irregolare. "
-            "Poi raggruppiamo clienti con comportamenti simili in cluster automatici.\n\n"
-            "**Cosa ottieni:** Una 'mappa dei comportamenti' dove ogni cliente appartiene a un gruppo "
-            "con caratteristiche comuni (es. 'Pagatori FIFO mensili', 'Irregolari multifattura')."
+            "**Cosa succede:** Dai line items creiamo eventi di pagamento (fattura→pareggio) con tutte le feature temporali.\n\n"
+            "**Cosa ottieni:** File `events.parquet` e `event_items.parquet` con eventi pronti per training."
         ),
-        "business_value": (
-            "💡 **Valore Business:** Clustering ti permette di **segmentare strategie**: "
-            "solleciti personalizzati per gruppo, previsioni di cassa più accurate, identificazione rapida anomalie. "
-            "È come avere una 'famiglia' di clienti con regole comuni."
-        ),
-        "sap_pills": ["evento_pagamento", "data_registrazione"],
-        "technical_details": (
-            "**Dettagli Tecnici:**\n"
-            "- Feature engineering: periodicità (ACF), coverage mensile, policy score storici\n"
-            "- Embeddings: PCA/UMAP su client-level features (storico aggregato)\n"
-            "- Clustering: **HDBSCAN** (density-based, auto #cluster, metrica cosine)\n"
-            "- Pattern detector (Prompt 5): dominant_policy, pattern_confidence, k_mode\n"
-            "- Output: `client_clusters.parquet`, `client_patterns.parquet`, `cluster_summary.parquet`"
-        ),
-        "pipeline_steps": ["embeddings", "projection", "hdbscan", "clusters", "patterns"],
-        "output_files": ["client_embeddings.parquet", "client_embedding_2d.parquet", "client_clusters.parquet", "client_patterns.parquet", "cluster_summary.parquet"],
-        "estimated_time": "5-12 minuti",
-        "link_page": "Clusters",
+        "business_value": "💡 Trasformiamo righe SAP in eventi business (fattura pagata/non pagata).",
+        "sap_pills": ["pareggio", "data_documento"],
+        "technical_details": "CLI: `python -m src.features.build_events`",
+        "pipeline_steps": ["events"],
+        "output_files": ["events.parquet", "event_items.parquet"],
+        "estimated_time": "2-5 min",
+        "link_page": "Data Explorer",
     },
     {
         "id": 3,
-        "title": "🎯 Allena Modello Scoring",
-        "subtitle": "Prevedi quali fatture verranno pagate (p_i)",
+        "title": "🏷️ Make Labels",
+        "subtitle": "Crea etichette per training ML",
         "description": (
-            "**Cosa succede:** Insegniamo al sistema a calcolare **p_i = probabilità che fattura i sia pagata** "
-            "usando segnali locali (importo, scadenza, aging) + pattern del cliente (cluster, policy dominante). "
-            "Il modello impara da migliaia di esempi storici 'fattura pagata vs non pagata'.\n\n"
-            "**Cosa ottieni:** Un **ranking predittivo** per ogni cliente: data la lista fatture aperte, "
-            "il sistema ordina per probabilità di pagamento e mostra coherenza con il pattern storico."
+            "**Cosa succede:** Da eventi creiamo dataset pointwise con label (pagato=1, non_pagato=0).\n\n"
+            "**Cosa ottieni:** File `train_pointwise.parquet` pronto per feature engineering."
         ),
-        "business_value": (
-            "💡 **Valore Business:** Predizioni accurate ti permettono di **prioritizzare azioni**: "
-            "quali fatture sollecitare, dove allocare team crediti, stimare liquidità settimanale. "
-            "È come avere un esperto che conosce ogni cliente a memoria."
-        ),
-        "sap_pills": ["partite_aperte", "pareggio"],
-        "technical_details": (
-            "**Dettagli Tecnici:**\n"
-            "- Algoritmi ML: **CatBoost** (primario) + AutoGluon (opzionale)\n"
-            "- Feature merge: invoice-level + cluster/pattern del cliente (no leakage)\n"
-            "- Training: split temporale, class imbalance handling, calibrazione isotonica\n"
-            "- Validation: pre-training checks, SHAP explainability\n"
-            "- Output: `champion.json`, `catboost.cbm`, `calibrator.pkl` (Prompt 6)"
-        ),
-        "pipeline_steps": ["validate", "train"],
-        "output_files": ["champion.json", "catboost.cbm", "calibrator.pkl"],
-        "estimated_time": "10-30 minuti",
-        "link_page": "KPI Dashboard",
+        "business_value": "💡 Prepariamo i 'casi di studio' per insegnare al modello.",
+        "sap_pills": [],
+        "technical_details": "CLI: `python -m src.features.make_labels`",
+        "pipeline_steps": ["labels"],
+        "output_files": ["train_pointwise.parquet"],
+        "estimated_time": "1-3 min",
+        "link_page": None,
     },
     {
         "id": 4,
-        "title": "📊 Rank Fatture Aperte",
-        "subtitle": "Scoring + coerenza con pattern cliente",
+        "title": "⚙️ Make Features",
+        "subtitle": "Ingegnerizza feature per ML",
         "description": (
-            "**Cosa succede:** Per ogni cliente con fatture aperte, calcoliamo **p_i per ogni fattura** "
-            "usando il modello allenato. Poi confrontiamo il ranking modello con la policy dominante del cliente "
-            "per generare un **agreement_score** (indica se il modello è allineato al comportamento storico).\n\n"
-            "**Cosa ottieni:** Tabella Top-k proposte con badge verde/giallo/rosso: "
-            "'✅ In linea con pattern' oppure '⚠️ Divergente dal solito comportamento'."
+            "**Cosa succede:** Calcoliamo feature avanzate (aging, importo relativo, recency, etc.) per ogni evento.\n\n"
+            "**Cosa ottieni:** File `train_features.parquet` completo di tutte le variabili predittive."
         ),
-        "business_value": (
-            "💡 **Valore Business:** Scoring + coerenza ti aiutano a **prendere decisioni consapevoli**: "
-            "se il modello propone fatture anomale rispetto al pattern, puoi indagare (es. cambio strategia cliente). "
-            "È come avere sia il radar predittivo che il benchmark storico."
+        "business_value": "💡 Creiamo le 'variabili intelligenti' che il modello userà per predire.",
+        "sap_pills": [],
+        "technical_details": "CLI: `python -m src.features.make_features`",
+        "pipeline_steps": ["features"],
+        "output_files": ["train_features.parquet"],
+        "estimated_time": "3-7 min",
+        "link_page": None,
+    },
+    
+    # === CLUSTERING GROUP (BEFORE TRAINING - cluster priors as features!) ===
+    {
+        "id": 5,
+        "title": "🧬 Client Embeddings",
+        "subtitle": "Crea rappresentazioni numeriche clienti",
+        "description": (
+            "**Cosa succede:** Trasformiamo ogni cliente in un vettore numerico (embedding) che cattura il suo comportamento.\n\n"
+            "**Cosa ottieni:** File `client_embeddings.parquet` con feature aggregate per clustering."
         ),
+        "business_value": "💡 Rappresentazione matematica del comportamento cliente.",
+        "sap_pills": [],
+        "technical_details": "CLI: `python -m src.analytics.make_client_embeddings`",
+        "pipeline_steps": ["embeddings"],
+        "output_files": ["client_embeddings.parquet"],
+        "estimated_time": "2-5 min",
+        "link_page": None,
+    },
+    {
+        "id": 6,
+        "title": "🗺️ Embedding Projection",
+        "subtitle": "Proietta embeddings in 2D (UMAP/PCA)",
+        "description": (
+            "**Cosa succede:** Riduciamo dimensionalità embeddings per visualizzazione scatter plot 2D.\n\n"
+            "**Cosa ottieni:** File `client_embedding_2d.parquet` con coordinate (x, y) per ogni cliente."
+        ),
+        "business_value": "💡 'Mappa' visuale dei clienti: chi è simile a chi.",
+        "sap_pills": [],
+        "technical_details": "CLI: `python -m src.analytics.embedding_viz --umap`",
+        "pipeline_steps": ["projection"],
+        "output_files": ["client_embedding_2d.parquet"],
+        "estimated_time": "3-8 min",
+        "link_page": None,
+    },
+    {
+        "id": 7,
+        "title": "🧩 HDBSCAN Clustering",
+        "subtitle": "Segmenta clienti in cluster automatici",
+        "description": (
+            "**Cosa succede:** HDBSCAN trova gruppi di clienti con comportamento simile (density-based clustering).\n\n"
+            "**Cosa ottieni:** File `client_clusters.parquet` con cluster_id per ogni cliente."
+        ),
+        "business_value": "💡 Segmentazione automatica: clienti con pattern simili nello stesso gruppo.",
+        "sap_pills": [],
+        "technical_details": "CLI: `python -m src.analytics.run_hdbscan`",
+        "pipeline_steps": ["hdbscan"],
+        "output_files": ["client_clusters.parquet"],
+        "estimated_time": "2-5 min",
+        "link_page": "Clusters",
+    },
+    {
+        "id": 8,
+        "title": "📊 Cluster Profiles",
+        "subtitle": "Riassumi caratteristiche cluster",
+        "description": (
+            "**Cosa succede:** Per ogni cluster calcoliamo metriche aggregate (policy dominante, size, coverage media).\n\n"
+            "**Cosa ottieni:** File `cluster_summary.parquet` con profilo di ogni cluster."
+        ),
+        "business_value": "💡 'Identikit' di ogni segmento: cosa li accomuna, quanto sono grandi.",
+        "sap_pills": [],
+        "technical_details": "CLI: `python -m src.analytics.cluster_profile`",
+        "pipeline_steps": ["clusters"],
+        "output_files": ["cluster_summary.parquet"],
+        "estimated_time": "1-3 min",
+        "link_page": "Clusters",
+    },
+    
+    # === TRAINING GROUP (uses cluster_id as feature!) ===
+    {
+        "id": 9,
+        "title": "✅ Pre-Training Validation",
+        "subtitle": "Verifica qualità dati prima del training",
+        "description": (
+            "**Cosa succede:** Controlliamo che i dati siano pronti per training (no leak, balance OK, feature complete).\n\n"
+            "**Cosa ottieni:** Report di validazione + conferma che si può procedere al training."
+        ),
+        "business_value": "💡 Quality gate: evitiamo training su dati problematici.",
+        "sap_pills": [],
+        "technical_details": "CLI: `python -m src.models.train --validate-only`",
+        "pipeline_steps": ["validate"],
+        "output_files": [],
+        "estimated_time": "1-2 min",
+        "link_page": None,
+    },
+    {
+        "id": 10,
+        "title": "🎯 Train Model",
+        "subtitle": "Allena CatBoost/AutoGluon per scoring",
+        "description": (
+            "**Cosa succede:** Training del modello ML su storico pagamenti → predice p_i (probabilità pagamento fattura).\n\n"
+            "**Cosa ottieni:** File `champion.json`, `catboost.cbm`, `calibrator.pkl` con modello pronto."
+        ),
+        "business_value": "💡 Il 'cervello' predittivo: impara pattern di pagamento da migliaia di esempi. USA cluster_id come feature!",
+        "sap_pills": [],
+        "technical_details": "CLI: `python -m src.models.train --model catboost`",
+        "pipeline_steps": ["train"],
+        "output_files": ["champion.json", "catboost.cbm", "calibrator.pkl"],
+        "estimated_time": "10-30 min",
+        "link_page": "KPI Dashboard",
+    },
+    
+    # === ANALYTICS GROUP ===
+    {
+        "id": 11,
+        "title": "🔍 Pattern Detectors",
+        "subtitle": "Identifica policy di pagamento dominanti",
+        "description": (
+            "**Cosa succede:** Per ogni cliente calcoliamo quale policy (FIFO, LIFO, largest, etc.) spiega meglio il suo storico.\n\n"
+            "**Cosa ottieni:** File `client_pattern_scores.parquet` con dominant_policy per cliente."
+        ),
+        "business_value": "💡 Scopriamo 'come paga' ogni cliente (es. sempre le fatture più vecchie prima).",
         "sap_pills": ["evento_pagamento"],
-        "technical_details": (
-            "**Dettagli Tecnici:**\n"
-            "- Scoring: p_i con calibrazione isotonica per ogni fattura aperta\n"
-            "- Coherence metric: confronto top-k modello vs top-k policy dominante\n"
-            "- Agreement score: overlap Jaccard + ranking correlation\n"
-            "- Policy ranking: FIFO, LIFO, largest, smallest, eomfirst (Prompt 7)\n"
-            "- Output: `event_policy_predictions.parquet` con p_i, rank, agreement_score, alignment_status"
+        "technical_details": "CLI: `python -m src.analytics.pattern_detectors`",
+        "pipeline_steps": ["patterns"],
+        "output_files": ["client_pattern_scores.parquet"],
+        "estimated_time": "2-5 min",
+        "link_page": "Pattern Summary",
+    },
+    {
+        "id": 12,
+        "title": "📊 Rules Backtest",
+        "subtitle": "Backtesta accuratezza policy rules",
+        "description": (
+            "**Cosa succede:** Verifichiamo quanti pagamenti storici sono predetti correttamente da ogni policy.\n\n"
+            "**Cosa ottieni:** File `client_rules_accuracy.parquet` con accuracy per policy/cliente."
         ),
-        "pipeline_steps": ["score", "kpi", "calibration", "policy"],
-        "output_files": ["event_policy_predictions.parquet", "kpi_ranking.parquet", "calibration_summary.parquet", "event_policy_metrics.parquet"],
-        "estimated_time": "5-15 minuti",
+        "business_value": "💡 Misuriamo quanto sono 'predicibili' i clienti con regole semplici.",
+        "sap_pills": [],
+        "technical_details": "CLI: `python -m src.analytics.rules_backtest`",
+        "pipeline_steps": ["rules"],
+        "output_files": ["client_rules_accuracy.parquet"],
+        "estimated_time": "2-4 min",
+        "link_page": None,
+    },
+    {
+        "id": 13,
+        "title": "📋 Pattern Table",
+        "subtitle": "Crea tabella riassuntiva pattern clienti",
+        "description": (
+            "**Cosa succede:** Assembliamo una tabella con dominant_policy, confidence, coverage mensile per ogni cliente.\n\n"
+            "**Cosa ottieni:** File `pattern_table.parquet` - vista unificata pattern cliente."
+        ),
+        "business_value": "💡 'Carta d'identità' di ogni cliente: come paga, quanto è stabile, coverage.",
+        "sap_pills": [],
+        "technical_details": "CLI: `python -m src.analytics.make_pattern_table`",
+        "pipeline_steps": ["table"],
+        "output_files": ["pattern_table.parquet"],
+        "estimated_time": "1-2 min",
+        "link_page": "Pattern Summary",
+    },
+    {
+        "id": 14,
+        "title": "📸 Pattern Reports",
+        "subtitle": "Genera report grafici pattern",
+        "description": (
+            "**Cosa succede:** Creiamo PNG visuali per ogni pattern cliente (timeline, policy chart, etc.).\n\n"
+            "**Cosa ottieni:** Cartella `reports/` con immagini pattern card."
+        ),
+        "business_value": "💡 Report visivi pronti per condivisione con team business.",
+        "sap_pills": [],
+        "technical_details": "CLI: `python -m src.report.make_report`",
+        "pipeline_steps": ["reports"],
+        "output_files": ["reports/"],
+        "estimated_time": "5-10 min",
+        "link_page": None,
+    },
+    
+    # === KPI & SCORING GROUP ===
+    {
+        "id": 15,
+        "title": "📈 KPI Ranking",
+        "subtitle": "Calcola ranking KPI fatture aperte",
+        "description": (
+            "**Cosa succede:** Per ogni cliente con fatture aperte, calcoliamo p_i (scoring ML) per ogni fattura e rankin KPI.\n\n"
+            "**Cosa ottieni:** File `kpi_ranking.parquet` con ranking predittivo fatture."
+        ),
+        "business_value": "💡 Top-k fatture da sollecitare: modello ordina per probabilità pagamento.",
+        "sap_pills": [],
+        "technical_details": "CLI: `python -m src.analytics.kpi_ranking`",
+        "pipeline_steps": ["kpi"],
+        "output_files": ["kpi_ranking.parquet"],
+        "estimated_time": "3-7 min",
+        "link_page": "KPI Dashboard",
+    },
+    {
+        "id": 16,
+        "title": "🎚️ Calibration Diagnostics",
+        "subtitle": "Valuta calibrazione probabilità modello",
+        "description": (
+            "**Cosa succede:** Verifichiamo se le probabilità p_i sono ben calibrate (p=0.8 → 80% pagato davvero).\n\n"
+            "**Cosa ottieni:** File `calibration_summary.parquet` con metriche ECE, Brier, reliability curve."
+        ),
+        "business_value": "💡 Quality check: le probabilità ML sono affidabili per decisioni business.",
+        "sap_pills": [],
+        "technical_details": "CLI: `python -m src.analytics.calibration`",
+        "pipeline_steps": ["calibration"],
+        "output_files": ["calibration_summary.parquet"],
+        "estimated_time": "2-5 min",
+        "link_page": None,
+    },
+    {
+        "id": 17,
+        "title": "🎯 Policy Metrics",
+        "subtitle": "Confronta ranking ML vs policy cliente",
+        "description": (
+            "**Cosa succede:** Per ogni cliente confrontiamo ranking modello con ranking policy dominante → agreement_score.\n\n"
+            "**Cosa ottieni:** File `event_policy_metrics.parquet` con coerenza modello/pattern storico."
+        ),
+        "business_value": "💡 Coherence check: badge verde/rosso se modello è allineato al pattern cliente.",
+        "sap_pills": [],
+        "technical_details": "CLI: `python -m src.analytics.event_policy_metrics`",
+        "pipeline_steps": ["policy"],
+        "output_files": ["event_policy_metrics.parquet"],
+        "estimated_time": "2-5 min",
         "link_page": "Pattern Card",
     },
 ]
@@ -499,6 +676,36 @@ def _get_curated_dir() -> Path:
 
 def _get_models_dir() -> Path:
     return Path(__file__).resolve().parents[2] / "models"
+
+
+def _cleanup_all_data() -> None:
+    """Delete all curated files and models to start fresh."""
+    import shutil
+    
+    data_root = _get_data_root()
+    curated = data_root / "curated"
+    models = _get_models_dir()
+    
+    try:
+        # Delete curated directory
+        if curated.exists():
+            shutil.rmtree(curated)
+            LOGGER.info(f"Deleted curated directory: {curated}")
+        
+        # Delete models directory
+        if models.exists():
+            shutil.rmtree(models)
+            LOGGER.info(f"Deleted models directory: {models}")
+        
+        # Reset session state
+        st.session_state["pipeline_initialized"] = False
+        st.session_state["success_message"] = "🗑️ Tutti i dati sono stati cancellati. Puoi ricominciare da zero."
+        LOGGER.info("Cleanup completed successfully")
+        
+    except Exception as exc:
+        error_msg = f"❌ Errore durante cleanup: {exc}"
+        st.session_state["error_message"] = error_msg
+        LOGGER.exception("Error during cleanup")
 
 
 def _check_step_completion(step_id: int) -> Dict[str, Any]:
@@ -548,9 +755,54 @@ def _run_wizard_step(step_id: int) -> None:
         status_text.text(f"Esecuzione: {step_name} ({i+1}/{len(pipeline_steps)})")
         progress_bar.progress(progress)
 
-        cmd = [sys.executable, "-m", "src.pipeline.run_all", "--step", step_name]
+        # Build command - call module directly instead of run_all.py (which has broken PipelineConfig)
+        # Map step names to direct module calls
+        step_modules = {
+            "events": "src.features.build_events",
+            "labels": "src.features.make_labels",
+            "features": "src.features.make_features",
+            "validate": "src.models.train",  # Will add --validate-only flag
+            "train": "src.models.train",
+            "patterns": "src.analytics.pattern_detectors",
+            "rules": "src.analytics.rules_backtest",
+            "table": "src.analytics.make_pattern_table",
+            "reports": "src.report.make_report",
+            "embeddings": "src.analytics.make_client_embeddings",
+            "projection": "src.analytics.embedding_viz",
+            "hdbscan": "src.analytics.run_hdbscan",
+            "clusters": "src.analytics.cluster_profile",
+            "kpi": "src.analytics.kpi_ranking",
+            "calibration": "src.analytics.calibration",
+            "policy": "src.analytics.event_policy_metrics",
+        }
+        
+        if step_name not in step_modules:
+            st.error(f"❌ Step '{step_name}' non riconosciuto")
+            return
+        
+        cmd = [sys.executable, "-m", step_modules[step_name]]
+        
+        # Add arguments based on step type
+        data_root = _get_data_root()
+        curated = data_root / "curated"
+        
+        if step_name == "events":
+            cmd.extend(["--input", str(curated / "line_items.parquet")])
+            cmd.extend(["--output", str(curated / "events.parquet")])
+            cmd.extend(["--output-items", str(curated / "event_items.parquet")])
+        elif step_name == "labels":
+            cmd.extend(["--events", str(curated / "events.parquet")])
+            cmd.extend(["--event-items", str(curated / "event_items.parquet")])
+            cmd.extend(["--output", str(curated / "train_pointwise.parquet")])
+        elif step_name == "features":
+            cmd.extend(["--train-pointwise", str(curated / "train_pointwise.parquet")])
+            cmd.extend(["--events", str(curated / "events.parquet")])
+            cmd.extend(["--output", str(curated / "train_features.parquet")])
+        elif step_name == "validate":
+            cmd.append("--validate-only")
+        
         env = os.environ.copy()
-        env["USE_MOCK"] = use_mock
+        env["USE_MOCK"] = "true" if st.session_state.get("mock_mode") else "false"
 
         try:
             result = subprocess.run(
@@ -561,8 +813,19 @@ def _run_wizard_step(step_id: int) -> None:
                 text=True,
                 timeout=600,
             )
+            
+            # Log subprocess output for debugging
+            if result.stdout:
+                LOGGER.info(f"Step {step_name} stdout:\n{result.stdout}")
+            if result.stderr:
+                LOGGER.warning(f"Step {step_name} stderr:\n{result.stderr}")
+            
             if result.returncode != 0:
-                st.error(f"❌ Errore durante esecuzione '{step_name}'")
+                error_msg = f"❌ Errore durante esecuzione '{step_name}'"
+                st.session_state["error_message"] = error_msg
+                st.session_state["error_details"] = result.stderr or "Nessun dettaglio disponibile"
+                LOGGER.error(f"{error_msg}\n{result.stderr}")
+                st.error(error_msg)
                 if result.stderr:
                     with st.expander("📋 Dettagli errore"):
                         st.code(result.stderr, language="text")
@@ -570,18 +833,29 @@ def _run_wizard_step(step_id: int) -> None:
                 status_text.empty()
                 return
         except subprocess.TimeoutExpired:
-            st.error(f"⏱️ Timeout durante esecuzione '{step_name}' (>600s)")
+            error_msg = f"⏱️ Timeout durante esecuzione '{step_name}' (>600s)"
+            st.session_state["error_message"] = error_msg
+            LOGGER.error(error_msg)
+            st.error(error_msg)
             progress_bar.empty()
             status_text.empty()
             return
         except Exception as e:
-            st.error(f"❌ Errore imprevisto: {e}")
+            error_msg = f"❌ Errore imprevisto: {e}"
+            st.session_state["error_message"] = error_msg
+            LOGGER.exception(f"Unexpected error in step {step_name}")
+            st.error(error_msg)
             progress_bar.empty()
             status_text.empty()
             return
 
     progress_bar.progress(1.0, text="✅ Completato!")
     status_text.empty()
+    
+    # Save success message to session state for persistence
+    st.session_state["success_message"] = f"✅ Step {step_id} completato con successo!"
+    LOGGER.info(f"Wizard step {step_id} completed successfully")
+    
     st.success(f"✅ Step {step_id} completato con successo!")
     st.balloons()
 
@@ -673,7 +947,8 @@ def _render_wizard_step_card(step: Dict[str, Any], step_completion: Dict[str, An
                 use_container_width=True,
                 help=f"Vai alla pagina '{step['link_page']}' per esplorare i risultati",
             ):
-                st.session_state["selected_page"] = step["link_page"]
+                # Use query params to change page instead of modifying session_state
+                st.query_params["page"] = step["link_page"]
                 st.rerun()
 
     st.divider()
@@ -687,6 +962,17 @@ def _render_wizard_step_card(step: Dict[str, Any], step_completion: Dict[str, An
 def render_overview_wizard_page() -> None:
     """Render Prompt 9 Overview & Wizard page - HDBSCAN→Scoring flow in 4 business-friendly steps."""
 
+    # Show persistent error messages from previous operations
+    if "error_message" in st.session_state:
+        st.error(st.session_state.pop("error_message"))
+        if "error_details" in st.session_state:
+            with st.expander("📋 Dettagli errore"):
+                st.code(st.session_state.pop("error_details"), language="text")
+    
+    # Show success messages from previous operations
+    if "success_message" in st.session_state:
+        st.success(st.session_state.pop("success_message"))
+    
     # Prompt 1: Check pipeline initialization status
     init_status = check_pipeline_initialization()
     
@@ -781,14 +1067,14 @@ def render_overview_wizard_page() -> None:
     )
 
     # Check completion status for all steps
-    step_statuses = [_check_step_completion(i + 1) for i in range(4)]
+    step_statuses = [_check_step_completion(i + 1) for i in range(len(WIZARD_STEPS))]
 
     # Prompt 1: Add refresh button to re-check files
     col_progress, col_refresh = st.columns([0.85, 0.15])
     
     with col_progress:
         # Overall progress
-        total_progress = sum(s["progress"] for s in step_statuses) / 4
+        total_progress = sum(s["progress"] for s in step_statuses) / len(WIZARD_STEPS)
         st.progress(total_progress, text=f"Progresso complessivo: {int(total_progress * 100)}%")
     
     with col_refresh:
@@ -802,28 +1088,34 @@ def render_overview_wizard_page() -> None:
         with st.container():
             _render_wizard_step_card(step, step_statuses[i])
 
-    # Quick start section
-    st.markdown("## 🚀 Quick Start")
-    col1, col2, col3, col4 = st.columns(4)
-
-    with col1:
-        if st.button("🔹 Esegui Step 1", use_container_width=True, type="primary"):
-            _run_wizard_step(1)
-            st.rerun()
-
-    with col2:
-        if st.button("🔹 Esegui Step 2", use_container_width=True, disabled=not step_statuses[0]["completed"]):
-            _run_wizard_step(2)
-            st.rerun()
-
-    with col3:
-        if st.button("🔹 Esegui Step 3", use_container_width=True, disabled=not step_statuses[1]["completed"]):
-            _run_wizard_step(3)
-            st.rerun()
-
-    with col4:
-        if st.button("🔹 Esegui Step 4", use_container_width=True, disabled=not step_statuses[2]["completed"]):
-            _run_wizard_step(4)
+    # Quick start section - mostra solo i primi step critici
+    st.markdown("## 🚀 Quick Start - Step Critici")
+    
+    # Genera bottoni per i primi 6 step (Data Prep + Training core)
+    cols = st.columns(min(6, len(WIZARD_STEPS)))
+    for i in range(min(6, len(WIZARD_STEPS))):
+        step_num = i + 1
+        with cols[i]:
+            # Step 1 è sempre abilitato, gli altri richiedono il precedente completato
+            is_disabled = i > 0 and not step_statuses[i - 1]["completed"]
+            button_type = "primary" if i == 0 else "secondary"
+            
+            if st.button(
+                f"▶️ Step {step_num}", 
+                use_container_width=True, 
+                type=button_type,
+                disabled=is_disabled,
+                help=WIZARD_STEPS[i]["title"]
+            ):
+                _run_wizard_step(step_num)
+                st.rerun()
+    
+    # Reset button in una colonna separata
+    st.markdown("---")
+    col_reset, col_spacer = st.columns([0.2, 0.8])
+    with col_reset:
+        if st.button("🗑️ Reset Tutto", use_container_width=True, type="secondary", help="Cancella tutti i dati curated e ricomincia da zero"):
+            _cleanup_all_data()
             st.rerun()
 
     # Help section - Prompt 9: Updated FAQ for HDBSCAN→Scoring flow
