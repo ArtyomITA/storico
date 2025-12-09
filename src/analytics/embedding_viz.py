@@ -18,12 +18,10 @@ from src.utils.logging_setup import configure_logging as setup_logging
 
 LOGGER = logging.getLogger(__name__)
 
-
 def configure_logging(level: int | str | None = logging.INFO) -> Path:
     """Configure shared logging if not already set."""
 
     return setup_logging(level)
-
 
 @dataclass
 class ProjectionResult:
@@ -31,7 +29,6 @@ class ProjectionResult:
 
     coordinates: np.ndarray
     method: str
-
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     """Parse CLI arguments for the embedding visualisation pipeline."""
@@ -69,11 +66,9 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     )
     return parser.parse_args(argv)
 
-
 def resolve_path(path: Path, project_root: Path) -> Path:
     """Resolve relative paths against the repository root."""
     return path if path.is_absolute() else project_root / path
-
 
 def load_embeddings(path: Path) -> pd.DataFrame:
     """Load client embeddings and guard against empty datasets."""
@@ -87,7 +82,6 @@ def load_embeddings(path: Path) -> pd.DataFrame:
         raise ValueError("'cliente' column missing from embeddings parquet.")
     return df
 
-
 def reduce_dimensionality(
     features_scaled: np.ndarray,
     features_normalised: np.ndarray,
@@ -97,20 +91,19 @@ def reduce_dimensionality(
     """Reduce feature space to 2D using UMAP (if requested) or PCA."""
     if use_umap:
         try:
-            import umap  # type: ignore[import]
+            import umap
 
             reducer = umap.UMAP(n_components=2, random_state=seed, metric="cosine")
             coords = reducer.fit_transform(features_normalised)
             return ProjectionResult(coordinates=coords, method="umap")
         except ImportError:
             LOGGER.warning("UMAP not installed; falling back to PCA.")
-        except Exception as exc:  # pragma: no cover - defensive
+        except Exception as exc:
             LOGGER.warning("UMAP failed (%s); falling back to PCA.", exc)
 
     pca = PCA(n_components=2, random_state=seed)
     coords = pca.fit_transform(features_scaled)
     return ProjectionResult(coordinates=coords, method="pca")
-
 
 def compute_neighbours(
     clients: Sequence[str],
@@ -154,7 +147,6 @@ def compute_neighbours(
 
     return pd.DataFrame(rows)
 
-
 def write_outputs(
     output_dir: Path,
     projection_df: pd.DataFrame,
@@ -172,7 +164,6 @@ def write_outputs(
     LOGGER.info("Saved neighbour index to %s", neighbours_path)
 
     return projection_path, neighbours_path
-
 
 def main(argv: Sequence[str] | None = None) -> None:
     configure_logging()
@@ -226,6 +217,6 @@ def main(argv: Sequence[str] | None = None) -> None:
     preview["distances"] = preview["distances"].apply(lambda lst: lst[:3])
     print(preview.to_string(index=False))
 
-
-if __name__ == "__main__":  # pragma: no cover
+if __name__ == "__main__":
     main()
+

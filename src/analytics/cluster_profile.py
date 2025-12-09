@@ -78,10 +78,8 @@ CARDINALITY_SHORT_LABELS: Dict[str, str] = {
 }
 CLUSTER_OUTPUT = Path("data/curated/cluster_summary.parquet")
 
-
 def configure_logging(level: int | str | None = logging.INFO) -> Path:
     return setup_logging(level)
-
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -125,16 +123,13 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     )
     return parser.parse_args(argv)
 
-
 def resolve_path(path: Path, root: Path) -> Path:
     return path if path.is_absolute() else root / path
-
 
 def read_table(path: Path) -> pd.DataFrame:
     if not path.exists():
         raise FileNotFoundError(f"Required input not found: {path}")
     return pd.read_parquet(path)
-
 
 def read_optional_table(path: Path) -> Optional[pd.DataFrame]:
     if not path.exists():
@@ -142,10 +137,8 @@ def read_optional_table(path: Path) -> Optional[pd.DataFrame]:
         return None
     return pd.read_parquet(path)
 
-
 def identify_macro_columns(df: pd.DataFrame) -> List[str]:
     return [col for col in df.columns if col.startswith("share_tipo_documento_")]
-
 
 def compute_iqr(series: pd.Series) -> float:
     if series.empty:
@@ -153,7 +146,6 @@ def compute_iqr(series: pd.Series) -> float:
     q75 = series.quantile(0.75)
     q25 = series.quantile(0.25)
     return float(q75 - q25)
-
 
 def prepare_dataset(
     clusters: pd.DataFrame,
@@ -180,7 +172,6 @@ def prepare_dataset(
         merged = merged.dropna()
     return merged
 
-
 def fetch_indicator_columns(df: pd.DataFrame) -> List[str]:
     macro_cols = identify_macro_columns(df)
     indicator_cols = list(
@@ -193,7 +184,6 @@ def fetch_indicator_columns(df: pd.DataFrame) -> List[str]:
     )
     indicator_cols = [col for col in indicator_cols if col in df.columns]
     return indicator_cols
-
 
 def compute_silhouette_map(
     data: pd.DataFrame,
@@ -234,7 +224,6 @@ def compute_silhouette_map(
     value_array = np.asarray(scores, dtype=float)
     return {cliente: float(value) for cliente, value in zip(clients, value_array.tolist())}
 
-
 def compute_density_map(neighbors: Optional[pd.DataFrame]) -> Dict[str, float]:
     if neighbors is None or neighbors.empty:
         return {}
@@ -258,7 +247,6 @@ def compute_density_map(neighbors: Optional[pd.DataFrame]) -> Dict[str, float]:
         density[str(getattr(row, "cliente"))] = float(1.0 / (1.0 + mean_dist))
     return density
 
-
 def policy_dispersion_confidence(policy_means: Dict[str, float]) -> float:
     scores = [value for value in policy_means.values() if not np.isnan(value)]
     if not scores:
@@ -269,7 +257,6 @@ def policy_dispersion_confidence(policy_means: Dict[str, float]) -> float:
     else:
         dispersion = ordered[0] - ordered[1]
     return float(np.clip(dispersion, 0.0, 1.0))
-
 
 def derive_cluster_confidence(
     members: Iterable[str],
@@ -297,7 +284,6 @@ def derive_cluster_confidence(
 
     return policy_dispersion_confidence(policy_means)
 
-
 def select_cadence_label(cluster_means: pd.Series) -> Optional[str]:
     best_col: Optional[str] = None
     best_value = -np.inf
@@ -314,7 +300,6 @@ def select_cadence_label(cluster_means: pd.Series) -> Optional[str]:
         return None
     return HUMAN_LABELS.get(best_col, best_col)
 
-
 def select_policy_label(cluster_means: pd.Series) -> Optional[str]:
     best_col: Optional[str] = None
     best_value = -np.inf
@@ -330,7 +315,6 @@ def select_policy_label(cluster_means: pd.Series) -> Optional[str]:
     if best_col is None or best_value <= 0:
         return None
     return HUMAN_LABELS.get(best_col, best_col)
-
 
 def build_cardinality_tag(cluster_means: pd.Series) -> Optional[str]:
     values: List[Tuple[str, float]] = []
@@ -350,7 +334,6 @@ def build_cardinality_tag(cluster_means: pd.Series) -> Optional[str]:
         return f"k={first}–{second}"
     first = CARDINALITY_SHORT_LABELS.get(values[0][0], values[0][0])
     return f"k={first}"
-
 
 def compose_cluster_label(
     cadence_label: Optional[str],
@@ -445,7 +428,6 @@ def create_summary(
     LOGGER.info("Cluster summary saved to %s", output_path)
     return summary_df
 
-
 def print_samples(summary_df: pd.DataFrame, max_rows: int = 3) -> None:
     preview = summary_df.sort_values("size", ascending=False).head(max_rows)
     cols_to_show = ["cluster_label_id", "size", "cluster_label", "cluster_confidence"]
@@ -453,7 +435,6 @@ def print_samples(summary_df: pd.DataFrame, max_rows: int = 3) -> None:
     cols_to_show.extend(extra_cols[:3])
     print("Cluster summaries (top rows):")
     print(preview[cols_to_show].to_string(index=False))
-
 
 def main(argv: Sequence[str] | None = None) -> None:
     configure_logging()
@@ -493,6 +474,6 @@ def main(argv: Sequence[str] | None = None) -> None:
     )
     print_samples(summary_df)
 
-
-if __name__ == "__main__":  # pragma: no cover
+if __name__ == "__main__":
     main()
+

@@ -14,14 +14,8 @@ import streamlit as st
 
 LOGGER = logging.getLogger(__name__)
 
-# Project root detection
 CURRENT_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = CURRENT_DIR.parent.parent
-
-
-# ================================================================================================
-# Pipeline Initialization Check - Prompt 1: Cold Start Support
-# ================================================================================================
 
 def check_pipeline_initialization() -> Dict[str, Any]:
     """Check if pipeline has been initialized with data.
@@ -33,38 +27,33 @@ def check_pipeline_initialization() -> Dict[str, Any]:
         - missing_files (List[str]): List of missing required files
         - has_raw (bool): True if raw data directory has files
     """
-    # Determine data root based on mock_mode
     if st.session_state.get("mock_mode"):
         data_root = PROJECT_ROOT / "data_mock"
         source_hint = "mock"
     else:
         data_root = PROJECT_ROOT / "data"
         source_hint = "real"
-    
+
     curated_dir = data_root / "curated"
     raw_dir = data_root / "raw"
-    
-    # Check required files - only line_items.parquet is needed after ingestion
-    # events.parquet is created by build_events step
+
     required_files = ["line_items.parquet"]
     missing_files = []
-    
+
     for filename in required_files:
         file_path = curated_dir / filename
         if not file_path.exists():
             missing_files.append(filename)
-    
-    # Check if raw directory has files
+
     has_raw = False
     if raw_dir.exists():
         raw_files = list(raw_dir.glob("*.xlsx")) + list(raw_dir.glob("*.csv"))
         raw_files += list((raw_dir / "uploads").glob("*.xlsx")) if (raw_dir / "uploads").exists() else []
         has_raw = len(raw_files) > 0
-    
-    # Determine initialization status
+
     initialized = len(missing_files) == 0
     source = source_hint if initialized else "none"
-    
+
     return {
         "initialized": initialized,
         "source": source,
@@ -72,16 +61,10 @@ def check_pipeline_initialization() -> Dict[str, Any]:
         "has_raw": has_raw,
     }
 
-
-# ================================================================================================
-# Mock Data Generation Flow - Prompt 1: Auto-generate + ingest synthetic data
-# ================================================================================================
-
 def generate_mock_data_flow() -> None:
     """Generate synthetic data and run normalization automatically."""
     with st.spinner("🎭 Generazione dataset sintetico..."):
         try:
-            # 1. Run mock data generator
             result = subprocess.run(
                 [sys.executable, "-m", "scripts.make_mock_data"],
                 cwd=str(PROJECT_ROOT),
@@ -89,21 +72,20 @@ def generate_mock_data_flow() -> None:
                 text=True,
                 timeout=120,
             )
-            
+
             if result.returncode != 0:
                 st.error(f"❌ Errore generazione mock: {result.stderr}")
                 LOGGER.error(f"Mock data generation failed: {result.stderr}")
                 return
-            
-            # 2. Check if mock file was created
+
             mock_file = PROJECT_ROOT / "data_mock" / "raw" / "sap_mock.xlsx"
             if not mock_file.exists():
                 st.error("❌ File mock non trovato dopo generazione")
                 LOGGER.error(f"Mock file not found at {mock_file}")
                 return
-            
+
             st.success("✅ Dataset sintetico generato!")
-            
+
         except subprocess.TimeoutExpired:
             st.error("❌ Timeout generazione mock (>120s)")
             return
@@ -111,44 +93,36 @@ def generate_mock_data_flow() -> None:
             st.error(f"❌ Errore imprevisto: {exc}")
             LOGGER.exception("Error generating mock data")
             return
-    
-    # 3. Auto-run ingestion on generated mock file
+
     with st.spinner("📥 Ingestion dataset sintetico..."):
         try:
             from src.data import ingest_multi
-            
+
             output_path = PROJECT_ROOT / "data_mock" / "curated" / "line_items.parquet"
             docmap_path = PROJECT_ROOT / "data_mock" / "curated" / "docmap.parquet"
-            
+
             cli_args = [
                 "--input", str(mock_file),
                 "--output", str(output_path),
                 "--docmap", str(docmap_path),
             ]
-            
+
             ingest_multi.run(cli_args)
-            
+
             st.success("✅ Ingestion completata!")
-            
+
         except Exception as exc:
             st.error(f"❌ Errore ingestion: {exc}")
             LOGGER.exception("Error ingesting mock data")
             return
-    
-    # 4. Update session state
+
     st.session_state["pipeline_initialized"] = True
     st.session_state["data_source"] = "mock"
     st.session_state["success_message"] = "✅ Dataset demo pronto! Attiva 'Mock mode' nella sidebar."
-    # Note: mock_mode is controlled by widget, user needs to toggle it manually
-    
+
     LOGGER.info("Mock data generation completed successfully")
     st.balloons()
     st.rerun()
-
-
-# ================================================================================================
-# Real Data Ingestion Flow - Prompt 1: Upload + ingest real SAP files
-# ================================================================================================
 
 def ingest_real_data_flow(uploaded_files: List) -> None:
     """Ingest real SAP Excel files uploaded by user.
@@ -159,37 +133,34 @@ def ingest_real_data_flow(uploaded_files: List) -> None:
     if not uploaded_files:
         st.warning("⚠️ Nessun file selezionato")
         return
-    
-    # Save uploaded files to raw/uploads
+
     raw_dir = PROJECT_ROOT / "data" / "raw" / "uploads"
     raw_dir.mkdir(parents=True, exist_ok=True)
-    
+
     saved_paths = []
     for uploaded in uploaded_files:
         target = raw_dir / uploaded.name
         target.write_bytes(uploaded.getbuffer())
         saved_paths.append(target)
         LOGGER.info(f"Saved uploaded file: {target}")
-    
+
     st.info(f"📁 Salvati {len(saved_paths)} file in {raw_dir}")
-    
-    # Run ingestion
+
     with st.spinner(f"📥 Ingestion di {len(saved_paths)} file..."):
         try:
             from src.data import ingest_multi
-            
+
             cli_args = ["--input"] + [str(p) for p in saved_paths]
             cli_args += [
                 "--output", str(PROJECT_ROOT / "data" / "curated" / "line_items.parquet"),
                 "--docmap", str(PROJECT_ROOT / "data" / "curated" / "docmap.parquet"),
             ]
-            
+
             ingest_multi.run(cli_args)
-            
+
             st.success(f"✅ Ingestion completata: {len(saved_paths)} file")
-            
+
         except Exception as exc:
-            # Cleanup orphaned files on failure
             for path in saved_paths:
                 if path.exists():
                     path.unlink()
@@ -197,26 +168,19 @@ def ingest_real_data_flow(uploaded_files: List) -> None:
             st.warning(f"⚠️ File caricati rimossi a causa dell'errore ({len(saved_paths)} file)")
             LOGGER.exception("Error ingesting real data")
             return
-    
-    # Update session state
+
     st.session_state["pipeline_initialized"] = True
     st.session_state["data_source"] = "real"
     st.session_state["success_message"] = f"✅ Ingestion completata: {len(saved_paths)} file processati"
-    # Note: mock_mode is controlled by widget, don't set it directly
-    
+
     LOGGER.info(f"Ingestion completed successfully: {len(saved_paths)} files")
     st.balloons()
     st.rerun()
 
-
-# ================================================================================================
-# Welcome Screen (Cold Start) - Prompt 1: Guide user to initialize pipeline
-# ================================================================================================
-
 def render_welcome_screen() -> None:
     """Render welcome screen for cold start (no data loaded yet)."""
     st.title("🚀 Inizia la tua Analisi Intelligente dei Pagamenti")
-    
+
     st.markdown(
         """
         Benvenuto nel sistema di analisi predittiva delle **partite aperte**! 
@@ -225,16 +189,14 @@ def render_welcome_screen() -> None:
         Scegli una delle opzioni qui sotto per iniziare.
         """
     )
-    
+
     st.markdown("---")
-    
-    # Two-column layout for options
+
     col1, col2 = st.columns(2)
-    
-    # Option A: Mock Data (Demo)
+
     with col1:
         st.markdown("### 🎭 Dataset Demo (Mock)")
-        
+
         st.markdown(
             """
             **Perfetto per:**
@@ -249,16 +211,14 @@ def render_welcome_screen() -> None:
             - Dati completi per tutti gli step
             """
         )
-        
+
         if st.button("📦 Genera Dataset Demo", use_container_width=True, type="primary"):
             generate_mock_data_flow()
-            # generate_mock_data_flow calls st.rerun(), execution should stop here
             st.stop()
-    
-    # Option B: Real Data (Upload SAP files)
+
     with col2:
         st.markdown("### 📁 Carica Dati SAP Reali")
-        
+
         st.markdown(
             """
             **Perfetto per:**
@@ -272,25 +232,23 @@ def render_welcome_screen() -> None:
             - Tabelle SAP: BSID, BSAD
             """
         )
-        
+
         uploaded_files = st.file_uploader(
             "Seleziona file SAP (.xlsx o .csv)",
             type=["xlsx", "csv"],
             accept_multiple_files=True,
             key="sap_uploader_welcome",
         )
-        
+
         if st.button("📥 Avvia Ingestion", use_container_width=True, type="primary", disabled=not uploaded_files):
             ingest_real_data_flow(uploaded_files)
-            # ingest_real_data_flow calls st.rerun(), execution should stop here
             st.stop()
-    
-    # Progress indicator
+
     st.markdown("---")
     st.markdown("### 📊 Stato Pipeline")
-    
+
     init_status = check_pipeline_initialization()
-    
+
     if init_status["initialized"]:
         st.success("✅ Dati caricati e pronti")
         st.info(f"📂 Fonte dati: **{init_status['source']}**")
@@ -298,8 +256,7 @@ def render_welcome_screen() -> None:
         st.warning("⏳ File raw presenti ma non processati. Clicca 'Avvia Ingestion' per procedere.")
     else:
         st.info("⏳ In attesa di dati. Seleziona un'opzione qui sopra per iniziare.")
-    
-    # Help section
+
     with st.expander("❓ Serve aiuto?"):
         st.markdown(
             """
@@ -321,11 +278,6 @@ def render_welcome_screen() -> None:
             Vedrai ✅ verde quando i dati sono pronti.
             """
         )
-
-
-# ================================================================================================
-# SAP Business Glossary - Pillole per utenti business
-# ================================================================================================
 
 SAP_GLOSSARY = {
     "partite_aperte": {
@@ -366,14 +318,7 @@ SAP_GLOSSARY = {
     },
 }
 
-
-# ================================================================================================
-# Wizard Step Definitions
-# ================================================================================================
-
-# Prompt 9: CORRECT ORDER - HDBSCAN BEFORE TRAIN (cluster priors as features!)
 WIZARD_STEPS = [
-    # === DATA PREPARATION GROUP ===
     {
         "id": 1,
         "title": "📥 Ingest SAP Data",
@@ -385,7 +330,7 @@ WIZARD_STEPS = [
         "business_value": "💡 Fondamento: dati SAP trasformati in formato analitico.",
         "sap_pills": ["partite_aperte"],
         "technical_details": "Gestito dall'upload nella welcome screen - eseguito automaticamente.",
-        "pipeline_steps": [],  # Already done in welcome screen
+        "pipeline_steps": [],
         "output_files": ["line_items.parquet", "docmap.parquet"],
         "estimated_time": "Completato",
         "link_page": "Data Explorer",
@@ -438,8 +383,7 @@ WIZARD_STEPS = [
         "estimated_time": "3-7 min",
         "link_page": None,
     },
-    
-    # === CLUSTERING GROUP (BEFORE TRAINING - cluster priors as features!) ===
+
     {
         "id": 5,
         "title": "🧬 Client Embeddings",
@@ -504,8 +448,7 @@ WIZARD_STEPS = [
         "estimated_time": "1-3 min",
         "link_page": "Clusters",
     },
-    
-    # === TRAINING GROUP (uses cluster_id as feature!) ===
+
     {
         "id": 9,
         "title": "✅ Pre-Training Validation",
@@ -538,8 +481,7 @@ WIZARD_STEPS = [
         "estimated_time": "10-30 min",
         "link_page": "KPI Dashboard",
     },
-    
-    # === ANALYTICS GROUP ===
+
     {
         "id": 11,
         "title": "🔍 Pattern Detectors",
@@ -604,8 +546,7 @@ WIZARD_STEPS = [
         "estimated_time": "5-10 min",
         "link_page": None,
     },
-    
-    # === KPI & SCORING GROUP ===
+
     {
         "id": 15,
         "title": "📈 KPI Ranking",
@@ -656,12 +597,6 @@ WIZARD_STEPS = [
     },
 ]
 
-
-# ================================================================================================
-# Helper Functions
-# ================================================================================================
-
-
 def _get_data_root() -> Path:
     """Return data root directory: data_mock/ when mock_mode active, else data/."""
     project_root = Path(__file__).resolve().parents[2]
@@ -669,44 +604,37 @@ def _get_data_root() -> Path:
         return project_root / "data_mock"
     return project_root / Path(os.getenv("APP_DATA_ROOT", "data"))
 
-
 def _get_curated_dir() -> Path:
     return _get_data_root() / "curated"
-
 
 def _get_models_dir() -> Path:
     return Path(__file__).resolve().parents[2] / "models"
 
-
 def _cleanup_all_data() -> None:
     """Delete all curated files and models to start fresh."""
     import shutil
-    
+
     data_root = _get_data_root()
     curated = data_root / "curated"
     models = _get_models_dir()
-    
+
     try:
-        # Delete curated directory
         if curated.exists():
             shutil.rmtree(curated)
             LOGGER.info(f"Deleted curated directory: {curated}")
-        
-        # Delete models directory
+
         if models.exists():
             shutil.rmtree(models)
             LOGGER.info(f"Deleted models directory: {models}")
-        
-        # Reset session state
+
         st.session_state["pipeline_initialized"] = False
         st.session_state["success_message"] = "🗑️ Tutti i dati sono stati cancellati. Puoi ricominciare da zero."
         LOGGER.info("Cleanup completed successfully")
-        
+
     except Exception as exc:
         error_msg = f"❌ Errore durante cleanup: {exc}"
         st.session_state["error_message"] = error_msg
         LOGGER.exception("Error during cleanup")
-
 
 def _check_step_completion(step_id: int) -> Dict[str, Any]:
     """Check if a wizard step has been completed by verifying all output files exist."""
@@ -719,7 +647,6 @@ def _check_step_completion(step_id: int) -> Dict[str, Any]:
     missing_files = []
 
     for filename in output_files:
-        # Check in both curated/ and models/ directories
         if filename.endswith(".json") or filename.endswith(".cbm") or filename.endswith(".pkl"):
             file_path = models / filename
         else:
@@ -738,7 +665,6 @@ def _check_step_completion(step_id: int) -> Dict[str, Any]:
         "missing_files": missing_files,
     }
 
-
 def _run_wizard_step(step_id: int) -> None:
     """Execute all pipeline steps for a wizard step."""
     wizard_step = WIZARD_STEPS[step_id - 1]
@@ -755,13 +681,11 @@ def _run_wizard_step(step_id: int) -> None:
         status_text.text(f"Esecuzione: {step_name} ({i+1}/{len(pipeline_steps)})")
         progress_bar.progress(progress)
 
-        # Build command - call module directly instead of run_all.py (which has broken PipelineConfig)
-        # Map step names to direct module calls
         step_modules = {
             "events": "src.features.build_events",
             "labels": "src.features.make_labels",
             "features": "src.features.make_features",
-            "validate": "src.models.train",  # Will add --validate-only flag
+            "validate": "src.models.train",
             "train": "src.models.train",
             "patterns": "src.analytics.pattern_detectors",
             "rules": "src.analytics.rules_backtest",
@@ -775,17 +699,16 @@ def _run_wizard_step(step_id: int) -> None:
             "calibration": "src.analytics.calibration",
             "policy": "src.analytics.event_policy_metrics",
         }
-        
+
         if step_name not in step_modules:
             st.error(f"❌ Step '{step_name}' non riconosciuto")
             return
-        
+
         cmd = [sys.executable, "-m", step_modules[step_name]]
-        
-        # Add arguments based on step type
+
         data_root = _get_data_root()
         curated = data_root / "curated"
-        
+
         if step_name == "events":
             cmd.extend(["--input", str(curated / "line_items.parquet")])
             cmd.extend(["--output", str(curated / "events.parquet")])
@@ -800,7 +723,7 @@ def _run_wizard_step(step_id: int) -> None:
             cmd.extend(["--output", str(curated / "train_features.parquet")])
         elif step_name == "validate":
             cmd.append("--validate-only")
-        
+
         env = os.environ.copy()
         env["USE_MOCK"] = "true" if st.session_state.get("mock_mode") else "false"
 
@@ -813,13 +736,12 @@ def _run_wizard_step(step_id: int) -> None:
                 text=True,
                 timeout=600,
             )
-            
-            # Log subprocess output for debugging
+
             if result.stdout:
                 LOGGER.info(f"Step {step_name} stdout:\n{result.stdout}")
             if result.stderr:
                 LOGGER.warning(f"Step {step_name} stderr:\n{result.stderr}")
-            
+
             if result.returncode != 0:
                 error_msg = f"❌ Errore durante esecuzione '{step_name}'"
                 st.session_state["error_message"] = error_msg
@@ -851,14 +773,12 @@ def _run_wizard_step(step_id: int) -> None:
 
     progress_bar.progress(1.0, text="✅ Completato!")
     status_text.empty()
-    
-    # Save success message to session state for persistence
+
     st.session_state["success_message"] = f"✅ Step {step_id} completato con successo!"
     LOGGER.info(f"Wizard step {step_id} completed successfully")
-    
+
     st.success(f"✅ Step {step_id} completato con successo!")
     st.balloons()
-
 
 def _render_sap_pill(pill_id: str) -> None:
     """Render a SAP glossary term as an info box."""
@@ -870,14 +790,12 @@ def _render_sap_pill(pill_id: str) -> None:
         st.markdown(f"**Definizione:** {term_data['definition']}")
         st.markdown(f"**Esempio:** {term_data['example']}")
 
-
 def _render_wizard_step_card(step: Dict[str, Any], step_completion: Dict[str, Any]) -> None:
     """Render a single wizard step as an expandable card."""
     step_id = step["id"]
     is_completed = step_completion["completed"]
     progress_pct = step_completion["progress"]
 
-    # Header with status badge
     col1, col2, col3 = st.columns([0.6, 0.3, 0.1])
     with col1:
         st.markdown(f"### {step['title']}")
@@ -892,28 +810,23 @@ def _render_wizard_step_card(step: Dict[str, Any], step_completion: Dict[str, An
     with col3:
         st.markdown(f"**{step_id}**", help=f"Step {step_id} di 4")
 
-    # Progress bar
     if not is_completed and progress_pct > 0:
         st.progress(progress_pct)
         st.caption(
             f"{step_completion['completed_count']}/{step_completion['total_count']} file completati. "
             f"Mancanti: {', '.join(step_completion['missing_files'])}"
         )
-    
-    # Prompt 1: Visual feedback for missing files
+
     if step_completion["missing_files"]:
         with st.expander("❌ File Mancanti - Clicca per dettagli"):
             for missing_file in step_completion["missing_files"]:
                 st.markdown(f"- ❌ `{missing_file}`")
             st.caption("💡 Esegui questo step per generare i file mancanti.")
 
-    # Main description
     st.markdown(step["description"])
 
-    # Business value highlight
     st.info(step["business_value"])
 
-    # SAP Pills
     if step["sap_pills"]:
         st.markdown("**📚 Glossario SAP:**")
         cols = st.columns(len(step["sap_pills"]))
@@ -921,14 +834,12 @@ def _render_wizard_step_card(step: Dict[str, Any], step_completion: Dict[str, An
             with cols[i]:
                 _render_sap_pill(pill_id)
 
-    # Technical details (collapsed by default)
     with st.expander("🔧 Dettagli Tecnici (per esperti)"):
         st.markdown(step["technical_details"])
         st.markdown(f"**Pipeline steps:** `{', '.join(step['pipeline_steps'])}`")
         st.markdown(f"**Output files:** `{', '.join(step['output_files'])}`")
         st.markdown(f"**⏱️ Tempo stimato:** {step['estimated_time']}")
 
-    # Action buttons
     col1, col2 = st.columns([0.7, 0.3])
     with col1:
         if st.button(
@@ -947,41 +858,29 @@ def _render_wizard_step_card(step: Dict[str, Any], step_completion: Dict[str, An
                 use_container_width=True,
                 help=f"Vai alla pagina '{step['link_page']}' per esplorare i risultati",
             ):
-                # Use query params to change page instead of modifying session_state
                 st.query_params["page"] = step["link_page"]
                 st.rerun()
 
     st.divider()
 
-
-# ================================================================================================
-# Main Rendering Function
-# ================================================================================================
-
-
 def render_overview_wizard_page() -> None:
     """Render Prompt 9 Overview & Wizard page - HDBSCAN→Scoring flow in 4 business-friendly steps."""
 
-    # Show persistent error messages from previous operations
     if "error_message" in st.session_state:
         st.error(st.session_state.pop("error_message"))
         if "error_details" in st.session_state:
             with st.expander("📋 Dettagli errore"):
                 st.code(st.session_state.pop("error_details"), language="text")
-    
-    # Show success messages from previous operations
+
     if "success_message" in st.session_state:
         st.success(st.session_state.pop("success_message"))
-    
-    # Prompt 1: Check pipeline initialization status
+
     init_status = check_pipeline_initialization()
-    
+
     if not init_status["initialized"]:
-        # Show cold start welcome screen if data not ready
         render_welcome_screen()
         return
 
-    # Hero section
     st.title("🏠 Benvenuto nell'Analisi Intelligente dei Pagamenti")
     st.markdown(
         """
@@ -996,7 +895,6 @@ def render_overview_wizard_page() -> None:
         unsafe_allow_html=True,
     )
 
-    # What this app does
     col1, col2 = st.columns([0.6, 0.4])
     with col1:
         st.markdown("### 🎯 Flusso HDBSCAN → Scoring Predittivo")
@@ -1048,7 +946,6 @@ def render_overview_wizard_page() -> None:
 
     st.divider()
 
-    # Wizard section - Prompt 9: Business-friendly flow explanation
     st.markdown("## 🧙‍♂️ Wizard Guidato: Dal Caricamento Dati al Ranking Fatture")
     st.markdown(
         """
@@ -1066,51 +963,43 @@ def render_overview_wizard_page() -> None:
         """
     )
 
-    # Check completion status for all steps
     step_statuses = [_check_step_completion(i + 1) for i in range(len(WIZARD_STEPS))]
 
-    # Prompt 1: Add refresh button to re-check files
     col_progress, col_refresh = st.columns([0.85, 0.15])
-    
+
     with col_progress:
-        # Overall progress
         total_progress = sum(s["progress"] for s in step_statuses) / len(WIZARD_STEPS)
         st.progress(total_progress, text=f"Progresso complessivo: {int(total_progress * 100)}%")
-    
+
     with col_refresh:
         if st.button("🔄 Verifica File", help="Aggiorna lo stato dei file di output", use_container_width=True):
             st.rerun()
 
     st.markdown("---")
 
-    # Render each wizard step
     for i, step in enumerate(WIZARD_STEPS):
         with st.container():
             _render_wizard_step_card(step, step_statuses[i])
 
-    # Quick start section - mostra solo i primi step critici
     st.markdown("## 🚀 Quick Start - Step Critici")
-    
-    # Genera bottoni per i primi 6 step (Data Prep + Training core)
+
     cols = st.columns(min(6, len(WIZARD_STEPS)))
     for i in range(min(6, len(WIZARD_STEPS))):
         step_num = i + 1
         with cols[i]:
-            # Step 1 è sempre abilitato, gli altri richiedono il precedente completato
             is_disabled = i > 0 and not step_statuses[i - 1]["completed"]
             button_type = "primary" if i == 0 else "secondary"
-            
+
             if st.button(
-                f"▶️ Step {step_num}", 
-                use_container_width=True, 
+                f"▶️ Step {step_num}",
+                use_container_width=True,
                 type=button_type,
                 disabled=is_disabled,
                 help=WIZARD_STEPS[i]["title"]
             ):
                 _run_wizard_step(step_num)
                 st.rerun()
-    
-    # Reset button in una colonna separata
+
     st.markdown("---")
     col_reset, col_spacer = st.columns([0.2, 0.8])
     with col_reset:
@@ -1118,7 +1007,6 @@ def render_overview_wizard_page() -> None:
             _cleanup_all_data()
             st.rerun()
 
-    # Help section - Prompt 9: Updated FAQ for HDBSCAN→Scoring flow
     with st.expander("❓ Domande Frequenti (FAQ)"):
         st.markdown(
             """
@@ -1158,14 +1046,12 @@ def render_overview_wizard_page() -> None:
             """
         )
 
-    # Footer - Prompt 9: Deep-link CTAs
     st.markdown("---")
     st.caption(
         "💡 **Quick Start:** Attiva 'Mock Mode' nella sidebar → clicca '📦 Crea dataset demo' → esegui Step 1-4 → "
         "esplora risultati in **Clusters** (segmenti) e **Pattern Card** (ranking + coerenza)."
     )
-    
-    # Deep-link shortcuts
+
     st.markdown("### 🔗 Vai Direttamente a:")
     link_cols = st.columns(4)
     with link_cols[0]:
@@ -1184,3 +1070,4 @@ def render_overview_wizard_page() -> None:
         if st.button("🧪 Data Explorer", use_container_width=True):
             st.session_state["selected_page"] = "Data Explorer"
             st.rerun()
+

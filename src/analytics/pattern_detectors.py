@@ -33,7 +33,6 @@ PERIODICITY_WINDOWS: Dict[str, int] = {
     "monthly": 30,
 }
 
-
 @dataclass
 class PolicyRanking:
     """Container for policy recall values computed on a single event."""
@@ -42,7 +41,6 @@ class PolicyRanking:
     event_key: str
     data_evento: pd.Timestamp
     recalls: Dict[str, float]
-
 
 def _annotate_doc_sequences(group: pd.DataFrame) -> pd.DataFrame:
     """Annotate consecutive document sequences within a client-month group."""
@@ -92,7 +90,6 @@ def _annotate_doc_sequences(group: pd.DataFrame) -> pd.DataFrame:
 
     return annotated.loc[group.index]
 
-
 def prepare_doc_map(line_items: pd.DataFrame) -> pd.DataFrame:
     """Create a document map with derived fields for policy ranking."""
     doc_map = line_items.copy()
@@ -125,7 +122,6 @@ def prepare_doc_map(line_items: pd.DataFrame) -> pd.DataFrame:
     doc_map["docnum_is_consecutive_block"] = doc_map["docnum_is_consecutive_block"].fillna(0).astype(int)
     doc_map["seq_block_len_client_month"] = doc_map["seq_block_len_client_month"].fillna(1).astype(int)
 
-    # Pre-compute amount deciles per client to reuse when needed.
     def _decile_transform(col: pd.Series) -> pd.Series:
         if col.empty:
             return pd.Series(0, index=col.index, dtype=int)
@@ -138,7 +134,6 @@ def prepare_doc_map(line_items: pd.DataFrame) -> pd.DataFrame:
     )
 
     return doc_map
-
 
 def prepare_candidate_table(
     events: pd.DataFrame,
@@ -192,7 +187,6 @@ def prepare_candidate_table(
 
     return merged
 
-
 def compute_periodicity_metrics(events: pd.DataFrame) -> pd.DataFrame:
     """Compute periodicity ratios for each client based on event cadence."""
 
@@ -223,12 +217,10 @@ def compute_periodicity_metrics(events: pd.DataFrame) -> pd.DataFrame:
 
     return pd.DataFrame(records, columns=columns)
 
-
 def configure_logging(level: int | str | None = logging.INFO) -> Path:
     """Configure shared logging handlers for CLI execution."""
 
     return setup_logging(level)
-
 
 def load_curated_tables(project_root: Path) -> Dict[str, pd.DataFrame]:
     """Load curated parquet tables required by the analytics pipeline."""
@@ -242,8 +234,8 @@ def load_curated_tables(project_root: Path) -> Dict[str, pd.DataFrame]:
         "line_items": "line_items.parquet",
         "train_features": "train_features.parquet",
         "train_pointwise": "train_pointwise.parquet",
-        "client_profiles": "client_profiles.parquet",  # Prompt 5: load client profiles
-        "client_clusters": "client_clusters.parquet",  # Prompt 5: load cluster assignments
+        "client_profiles": "client_profiles.parquet",
+        "client_clusters": "client_clusters.parquet",
     }
 
     tables: Dict[str, pd.DataFrame] = {}
@@ -255,7 +247,6 @@ def load_curated_tables(project_root: Path) -> Dict[str, pd.DataFrame]:
             LOGGER.warning("Missing curated table %s at %s", key, path)
             tables[key] = pd.DataFrame()
     return tables
-
 
 def compute_type_priority_lookup(
     events: pd.DataFrame,
@@ -337,7 +328,6 @@ def compute_type_priority_lookup(
             lookup[event_key] = top_type
 
     return lookup
-
 
 def _policy_rankings_for_event(
     event_row: pd.Series,
@@ -521,7 +511,6 @@ def _policy_rankings_for_event(
         recalls=recalls,
     )
 
-
 def compute_policy_metrics(
     events: pd.DataFrame,
     candidates: pd.DataFrame,
@@ -577,7 +566,6 @@ def compute_policy_metrics(
     for policy in POLICY_NAMES:
         mean_series = aggregates[(policy, "mean")]
         iqr_series = aggregates[(policy, "iqr")]
-        # Combine mean and dispersion into a single score (higher is better, dispersion penalised).
         combined = mean_series * (1 - np.clip(iqr_series, 0, 1))
         combined_scores[f"{policy}_score"] = combined
 
@@ -588,7 +576,6 @@ def compute_policy_metrics(
         if score_col in policy_scores.columns:
             policy_scores[alias_col] = policy_scores[score_col]
     return policy_scores, per_event_df
-
 
 def compute_cardinality_metrics(events: pd.DataFrame) -> pd.DataFrame:
     """Derive client-level statistics over event cardinalities."""
@@ -636,7 +623,6 @@ def compute_cardinality_metrics(events: pd.DataFrame) -> pd.DataFrame:
 
     return pd.DataFrame(records)
 
-
 def compute_amount_preference(train_features: pd.DataFrame) -> pd.Series:
     """Compute point-biserial correlation between amount decile and label per client."""
     if train_features.empty:
@@ -670,7 +656,6 @@ def compute_amount_preference(train_features: pd.DataFrame) -> pd.Series:
 
     return pd.Series(slopes, name="amount_pref_slope")
 
-
 def compute_stability_index(per_event_scores: pd.DataFrame, window: int = 3) -> pd.Series:
     """Compute stability index (1 stable, 0 unstable) per client."""
     if per_event_scores.empty:
@@ -697,7 +682,6 @@ def compute_stability_index(per_event_scores: pd.DataFrame, window: int = 3) -> 
         results[str(cliente)] = stability
     return pd.Series(results, name="stability_index")
 
-
 def build_client_pattern_scores(
     events: pd.DataFrame,
     policy_scores: pd.DataFrame,
@@ -720,7 +704,6 @@ def build_client_pattern_scores(
     merged[value_cols] = merged[value_cols].fillna(0.0)
 
     return merged
-
 
 def infer_pattern_label(row: pd.Series) -> Tuple[str, float]:
     """Infer a human-readable pattern label and confidence from scores."""
@@ -749,7 +732,6 @@ def infer_pattern_label(row: pd.Series) -> Tuple[str, float]:
     confidence = max(0.2, min((dominant_score + stability) / 2, 1.0))
     return "irregolare", confidence
 
-
 def save_client_pattern_scores(df: pd.DataFrame, project_root: Path) -> Path:
     """Persist client pattern scores to curated directory."""
     curated_dir = project_root / "data" / "curated"
@@ -759,7 +741,6 @@ def save_client_pattern_scores(df: pd.DataFrame, project_root: Path) -> Path:
     LOGGER.info("Saved %s client pattern rows to %s", len(df), output_path)
     return output_path
 
-
 def save_per_event_scores(df: pd.DataFrame, project_root: Path) -> Path:
     """Save per-event policy recall scores for downstream tasks."""
     curated_dir = project_root / "data" / "curated"
@@ -768,7 +749,6 @@ def save_per_event_scores(df: pd.DataFrame, project_root: Path) -> Path:
     df.to_parquet(output_path, compression="snappy", index=False)
     LOGGER.info("Saved %s per-event policy rows to %s", len(df), output_path)
     return output_path
-
 
 def determine_dominant_policy(row: pd.Series, policy_names: List[str] = POLICY_NAMES) -> str:
     """Determine the dominant policy for a client based on policy scores.
@@ -789,15 +769,12 @@ def determine_dominant_policy(row: pd.Series, policy_names: List[str] = POLICY_N
             policy_scores[policy] = float(row[score_col])
         else:
             policy_scores[policy] = 0.0
-    
+
     if not policy_scores or max(policy_scores.values()) < 0.1:
-        # Fallback: no clear pattern
         return "irregolare"
-    
-    # Return policy with highest score
+
     dominant = max(policy_scores.items(), key=lambda x: x[1])
     return dominant[0]
-
 
 def compute_pattern_confidence(
     row: pd.Series,
@@ -816,20 +793,17 @@ def compute_pattern_confidence(
     Returns:
         Confidence score in [0, 1]
     """
-    # Get dominant policy score
     score_col = f"{dominant_policy}_score"
     dominant_score = float(row.get(score_col, 0.0))
-    
-    # Get stability index (if available)
+
     stability = float(row.get("stability_index", 0.5))
-    
-    # Compute Gini coefficient of policy scores (concentration measure)
+
     policy_scores = []
     for policy in policy_names:
         score_col = f"{policy}_score"
         if score_col in row.index:
             policy_scores.append(float(row[score_col]))
-    
+
     if len(policy_scores) <= 1:
         gini = 0.0
     else:
@@ -840,14 +814,10 @@ def compute_pattern_confidence(
         if total == 0:
             gini = 0.0
         else:
-            # Gini coefficient: 1 = perfect concentration (good), 0 = uniform (bad)
             gini = float((2.0 * np.sum((np.arange(1, n + 1)) * sorted_scores) / (n * total)) - (n + 1) / n)
-    
-    # Confidence: weighted combination
-    # Higher dominant score + higher stability + higher concentration = higher confidence
+
     confidence = 0.5 * dominant_score + 0.3 * stability + 0.2 * gini
     return float(np.clip(confidence, 0.0, 1.0))
-
 
 def extract_periodicity_flags(row: pd.Series) -> Dict[str, bool]:
     """Extract periodicity flags (weekly, biweekly, monthly) from row.
@@ -860,14 +830,13 @@ def extract_periodicity_flags(row: pd.Series) -> Dict[str, bool]:
     Returns:
         Dict with periodicity_weekly, periodicity_biweekly, periodicity_monthly booleans
     """
-    threshold = 0.6  # 60% of events must match pattern
-    
+    threshold = 0.6
+
     return {
         "periodicity_weekly": bool(row.get("periodicity_weekly", 0.0) >= threshold),
         "periodicity_biweekly": bool(row.get("periodicity_biweekly", 0.0) >= threshold),
         "periodicity_monthly": bool(row.get("periodicity_monthly", 0.0) >= threshold),
     }
-
 
 def build_client_patterns(
     client_profiles: pd.DataFrame,
@@ -887,10 +856,8 @@ def build_client_patterns(
         DataFrame with cliente, cluster_label, dominant_policy, pattern_confidence,
         periodicity_weekly, periodicity_monthly, k_mode, month_coverage_*, etc.
     """
-    # Start with client_pattern_scores (has all policy scores + cardinality + periodicity)
     patterns = client_pattern_scores.copy()
-    
-    # Merge cluster assignments (if available)
+
     if not client_clusters.empty and "cliente" in client_clusters.columns:
         cluster_cols = ["cliente", "cluster_label", "membership_prob"]
         cluster_cols = [col for col in cluster_cols if col in client_clusters.columns]
@@ -901,13 +868,11 @@ def build_client_patterns(
         )
         LOGGER.info("Merged cluster assignments for %d clients", len(patterns))
     else:
-        patterns["cluster_label"] = -1  # Noise/no clustering
+        patterns["cluster_label"] = -1
         patterns["membership_prob"] = 0.0
         LOGGER.warning("No client_clusters available; using default cluster_label=-1")
-    
-    # Merge additional features from client_profiles (if not already present)
+
     if not client_profiles.empty and "cliente" in client_profiles.columns:
-        # Identify features from client_profiles not already in patterns
         profile_features = [
             col for col in client_profiles.columns
             if col != "cliente" and col not in patterns.columns
@@ -919,34 +884,30 @@ def build_client_patterns(
                 how="left"
             )
             LOGGER.info("Merged %d additional features from client_profiles", len(profile_features))
-    
-    # Apply Prompt 5 transformations
+
     patterns["dominant_policy"] = patterns.apply(
         lambda row: determine_dominant_policy(row), axis=1
     )
-    
+
     patterns["pattern_confidence"] = patterns.apply(
         lambda row: compute_pattern_confidence(row, row["dominant_policy"]), axis=1
     )
-    
-    # Extract periodicity flags as separate columns
+
     periodicity_flags = patterns.apply(extract_periodicity_flags, axis=1)
     for key in ["periodicity_weekly", "periodicity_biweekly", "periodicity_monthly"]:
         patterns[f"{key}_flag"] = periodicity_flags.apply(lambda x: x[key])
-    
-    # Ensure required columns exist (Prompt 5 acceptance criteria)
+
     required_cols = [
         "cliente", "dominant_policy", "pattern_confidence",
         "periodicity_weekly_flag", "periodicity_monthly_flag",
         "k_mode"
     ]
-    
-    # Add month_coverage_* if present
+
     month_coverage_cols = [
         col for col in patterns.columns
         if col.startswith("month_coverage_")
     ]
-    
+
     for col in required_cols:
         if col not in patterns.columns:
             LOGGER.warning("Required column %s missing; adding default", col)
@@ -958,23 +919,21 @@ def build_client_patterns(
                 patterns[col] = False
             elif col == "dominant_policy":
                 patterns[col] = "irregolare"
-    
-    # Log summary
+
     LOGGER.info(
         "Built client_patterns for %d clients with %d features (includes %d month_coverage cols)",
         len(patterns),
         len(patterns.columns),
         len(month_coverage_cols)
     )
-    
+
     dominant_counts = patterns["dominant_policy"].value_counts().head(5).to_dict()
     LOGGER.info("Top 5 dominant policies: %s", dominant_counts)
-    
+
     avg_confidence = patterns["pattern_confidence"].mean()
     LOGGER.info("Average pattern confidence: %.3f", avg_confidence)
-    
-    return patterns
 
+    return patterns
 
 def save_client_patterns(df: pd.DataFrame, project_root: Path) -> Path:
     """Save client_patterns.parquet to curated directory.
@@ -995,7 +954,6 @@ def save_client_patterns(df: pd.DataFrame, project_root: Path) -> Path:
     LOGGER.info("Saved %s client pattern rows to %s", len(df), output_path)
     return output_path
 
-
 def print_pattern_examples(scores: pd.DataFrame, per_event_scores: pd.DataFrame, examples: int = 3) -> None:
     """Print sample clients with inferred labels and top policies."""
     if scores.empty:
@@ -1011,7 +969,6 @@ def print_pattern_examples(scores: pd.DataFrame, per_event_scores: pd.DataFrame,
         print(
             f"Cliente {row['cliente']}: label={label}, confidence={confidence:.2f}, top policies: {top_repr}"
         )
-
 
 def main() -> None:
     """Entry-point for running the pattern detection workflow.
@@ -1030,8 +987,7 @@ def main() -> None:
         tables["events"], candidate_table
     )
     cardinality_df = compute_cardinality_metrics(tables["events"])
-    
-    # Compute month coverage metrics
+
     from src.analytics.month_coverage import compute_month_coverage_metrics
     LOGGER.info("Computing month full payment coverage metrics")
     coverage_df = compute_month_coverage_metrics(
@@ -1039,7 +995,7 @@ def main() -> None:
         tables["event_items"],
         tables.get("line_items", pd.DataFrame())
     )
-    
+
     client_pattern_scores = build_client_pattern_scores(
         tables["events"],
         policy_scores,
@@ -1047,40 +1003,34 @@ def main() -> None:
         tables["train_features"],
         per_event_scores,
     )
-    
-    # Merge coverage metrics into client_pattern_scores
+
     if not coverage_df.empty:
         client_pattern_scores = client_pattern_scores.merge(
             coverage_df[["cliente", "month_coverage_mean", "month_coverage_p95", "month_coverage_full_rate"]],
             on="cliente",
             how="left"
         )
-        # Fill NaN with 0 for clients without coverage data
         client_pattern_scores["month_coverage_mean"] = client_pattern_scores["month_coverage_mean"].fillna(0.0)
         client_pattern_scores["month_coverage_p95"] = client_pattern_scores["month_coverage_p95"].fillna(0.0)
         client_pattern_scores["month_coverage_full_rate"] = client_pattern_scores["month_coverage_full_rate"].fillna(0.0)
         LOGGER.info("Merged month coverage metrics into client_pattern_scores")
 
-    # Save intermediate client_pattern_scores (legacy output)
     save_client_pattern_scores(client_pattern_scores, project_root)
     if not per_event_scores.empty:
         save_per_event_scores(per_event_scores, project_root)
-    
-    # Prompt 5: Build client_patterns.parquet integrating profiles + clusters
+
     LOGGER.info("=== Prompt 5: Building client_patterns.parquet ===")
     client_patterns = build_client_patterns(
         client_profiles=tables.get("client_profiles", pd.DataFrame()),
         client_clusters=tables.get("client_clusters", pd.DataFrame()),
         client_pattern_scores=client_pattern_scores
     )
-    
-    # Save client_patterns.parquet (Prompt 5 output)
+
     patterns_path = save_client_patterns(client_patterns, project_root)
     LOGGER.info("=== Prompt 5 complete: %s ===", patterns_path)
-    
-    # Print examples
-    print_pattern_examples(client_pattern_scores, per_event_scores)
 
+    print_pattern_examples(client_pattern_scores, per_event_scores)
 
 if __name__ == "__main__":
     main()
+

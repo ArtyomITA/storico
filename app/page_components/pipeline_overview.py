@@ -12,7 +12,6 @@ import streamlit as st
 
 LOGGER = logging.getLogger(__name__)
 
-# Step definitions matching run_all.py step_registry
 PIPELINE_STEPS = [
     {
         "id": "ingest",
@@ -118,7 +117,6 @@ PIPELINE_STEPS = [
     },
 ]
 
-
 def _get_data_root() -> Path:
     """Return data root directory: data_mock/ when mock_mode active, else data/."""
     project_root = Path(__file__).resolve().parents[2]
@@ -126,18 +124,14 @@ def _get_data_root() -> Path:
         return project_root / "data_mock"
     return project_root / Path(os.getenv("APP_DATA_ROOT", "data"))
 
-
 def _get_curated_dir() -> Path:
     return _get_data_root() / "curated"
-
 
 def _get_models_dir() -> Path:
     return Path(__file__).resolve().parents[2] / "models"
 
-
 def _get_reports_dir() -> Path:
     return Path(__file__).resolve().parents[2] / "reports"
-
 
 def _check_step_status(step_id: str) -> Dict[str, Any]:
     """Check if a step has been completed by verifying output files exist."""
@@ -150,7 +144,7 @@ def _check_step_status(step_id: str) -> Dict[str, Any]:
         "events": curated / "events.parquet",
         "labels": curated / "train_pointwise.parquet",
         "features": curated / "train_features.parquet",
-        "validate": None,  # No output file
+        "validate": None,
         "train": models / "champion.json",
         "patterns": curated / "client_pattern_scores.parquet",
         "rules": curated / "client_rules_accuracy.parquet",
@@ -170,7 +164,6 @@ def _check_step_status(step_id: str) -> Dict[str, Any]:
         return {"status": "unknown", "path": None}
 
     if output_path.is_dir():
-        # Check if directory has files (e.g., reports/)
         if output_path.exists() and any(output_path.iterdir()):
             return {"status": "completed", "path": str(output_path)}
         return {"status": "not_started", "path": str(output_path)}
@@ -178,7 +171,6 @@ def _check_step_status(step_id: str) -> Dict[str, Any]:
     if output_path.exists():
         return {"status": "completed", "path": str(output_path)}
     return {"status": "not_started", "path": str(output_path)}
-
 
 def _load_last_log_lines(max_lines: int = 20) -> List[Dict[str, Any]]:
     """Load last N lines from JSON log file."""
@@ -204,7 +196,6 @@ def _load_last_log_lines(max_lines: int = 20) -> List[Dict[str, Any]]:
         return []
 
     return lines[-max_lines:]
-
 
 def _run_step(step_id: str, model: str = "catboost") -> None:
     """Execute a single pipeline step by invoking src.pipeline.run_all."""
@@ -248,16 +239,13 @@ def _run_step(step_id: str, model: str = "catboost") -> None:
         except Exception as e:
             st.error(f"Error executing step '{step_id}': {e}")
 
-
 def render_pipeline_overview_page() -> None:
     """Render PROMPT 3 Overview & Pipeline page with step buttons and log viewer."""
     st.title("🚀 Pipeline Overview & Control")
     st.markdown("**PROMPT 3**: Orchestratore unico con step idempotenti e UI pulsanti")
 
-    # Pipeline status dashboard
     st.header("📊 Pipeline Status")
-    
-    # Group steps by category
+
     groups = {
         "data": "Data Preparation",
         "training": "Model Training",
@@ -276,15 +264,13 @@ def render_pipeline_overview_page() -> None:
             for step in group_steps:
                 status_info = _check_step_status(step["id"])
                 cols = st.columns([3, 1, 1])
-                
-                # Step label + description
+
                 cols[0].markdown(
                     f"**{step['label']}**  \n"
                     f"<small style='color: #666;'>{step['description']}</small>",
                     unsafe_allow_html=True,
                 )
-                
-                # Status badge
+
                 status = status_info["status"]
                 if status == "completed":
                     cols[1].success("✅ Done")
@@ -292,30 +278,28 @@ def render_pipeline_overview_page() -> None:
                     cols[1].warning("⏸️ Pending")
                 else:
                     cols[1].info("❓ Unknown")
-                
-                # Run button
+
                 if cols[2].button(f"▶ Run", key=f"run_{step['id']}"):
                     _run_step(step["id"])
                     st.rerun()
 
     st.divider()
 
-    # Quick action buttons
     st.header("⚡ Quick Actions")
     col1, col2, col3 = st.columns(3)
-    
+
     with col1:
         if st.button("🔹 Ingest → Features (1-4)", use_container_width=True):
             for step_id in ["ingest", "events", "labels", "features"]:
                 _run_step(step_id)
             st.rerun()
-    
+
     with col2:
         if st.button("🔹 Validate + Train (5-6)", use_container_width=True):
             for step_id in ["validate", "train"]:
                 _run_step(step_id)
             st.rerun()
-    
+
     with col3:
         if st.button("🔹 Embeddings → Clusters (11-14)", use_container_width=True):
             for step_id in ["embeddings", "projection", "hdbscan", "clusters"]:
@@ -324,11 +308,9 @@ def render_pipeline_overview_page() -> None:
 
     st.divider()
 
-    # Log viewer
     st.header("📜 Recent Log Entries")
     log_lines = _load_last_log_lines(max_lines=20)
     if log_lines:
-        # Display as a table
         log_df = pd.DataFrame(log_lines)
         if "timestamp" in log_df.columns:
             log_df["timestamp"] = pd.to_datetime(log_df["timestamp"])
@@ -341,7 +323,6 @@ def render_pipeline_overview_page() -> None:
     else:
         st.info("No log entries found. Run a step to see logs.")
 
-    # Developer info
     with st.expander("ℹ️ Developer Info"):
         st.markdown(
             """
@@ -361,3 +342,4 @@ def render_pipeline_overview_page() -> None:
             - ⏳ 3-click workflow: Ingest → Train → Cluster
             """
         )
+

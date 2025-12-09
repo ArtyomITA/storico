@@ -19,7 +19,6 @@ POLICY_NAMES = [
 
 OUTPUT_PATH = Path("data/curated/event_policy_predictions.parquet")
 
-
 def prepare_event_features(project_root: Path) -> Tuple[pd.DataFrame, List[str]]:
     """Derive event-level features used as classifier predictors."""
 
@@ -51,7 +50,6 @@ def prepare_event_features(project_root: Path) -> Tuple[pd.DataFrame, List[str]]
     selected = engineered[["event_key", *feature_cols]].copy()
     return selected, feature_cols
 
-
 def build_training_table(project_root: Path) -> Tuple[pd.DataFrame, List[str], List[str]]:
     """Combine per-event policy recalls with engineered features."""
 
@@ -76,7 +74,6 @@ def build_training_table(project_root: Path) -> Tuple[pd.DataFrame, List[str], L
     merged = merged.loc[mask].reset_index(drop=True)
     return merged, recall_cols, feature_cols
 
-
 def train_classifier(X: pd.DataFrame, y: pd.Series, class_names: List[str]) -> CatBoostClassifier:
     """Train CatBoost multiclass classifier."""
     model = CatBoostClassifier(
@@ -88,7 +85,6 @@ def train_classifier(X: pd.DataFrame, y: pd.Series, class_names: List[str]) -> C
     )
     model.fit(X, y)
     return model
-
 
 def main() -> None:
     setup_logging(logging.INFO)
@@ -174,3 +170,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+

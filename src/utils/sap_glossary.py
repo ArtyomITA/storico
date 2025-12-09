@@ -3,13 +3,7 @@ from __future__ import annotations
 
 from typing import Dict, Any
 
-# ================================================================================================
-# SAP FI-AR (Financial Accounting - Accounts Receivable) Glossary
-# Fonte: SAP Help Portal, SAP Fiori Apps Reference Library, SAP Business One
-# ================================================================================================
-
 SAP_FI_AR_GLOSSARY: Dict[str, Dict[str, Any]] = {
-    # --- Documenti Contabili ---
     "partite_aperte": {
         "term_it": "Partite Aperte",
         "term_sap_en": "Open Items",
@@ -46,7 +40,6 @@ SAP_FI_AR_GLOSSARY: Dict[str, Dict[str, Any]] = {
         "ui_label": "Data Compensazione",
         "tooltip": "Data di chiusura della partita aperta (SAP: Clearing Date - AUGDT)",
     },
-    # --- Date Contabili ---
     "data_documento": {
         "term_it": "Data Documento",
         "term_sap_en": "Document Date",
@@ -83,7 +76,6 @@ SAP_FI_AR_GLOSSARY: Dict[str, Dict[str, Any]] = {
         "ui_label": "Data Scadenza",
         "tooltip": "Data entro cui il pagamento è dovuto (SAP: Net Due Date)",
     },
-    # --- Chiavi e Codici ---
     "chiave_contabile": {
         "term_it": "Chiave Contabile",
         "term_sap_en": "Posting Key",
@@ -111,7 +103,6 @@ SAP_FI_AR_GLOSSARY: Dict[str, Dict[str, Any]] = {
         "ui_label": "Num. Documento",
         "tooltip": "Identificativo univoco documento (SAP: Document Number - BELNR)",
     },
-    # --- Importi e Valute ---
     "importo_documento": {
         "term_it": "Importo Documento",
         "term_sap_en": "Document Amount",
@@ -139,7 +130,6 @@ SAP_FI_AR_GLOSSARY: Dict[str, Dict[str, Any]] = {
         "ui_label": "Importo (Valuta Doc.)",
         "tooltip": "Importo originale nella valuta del documento (SAP: Document Currency Amount - WRBTR)",
     },
-    # --- Clienti e Conti ---
     "conto_cliente": {
         "term_it": "Conto Cliente",
         "term_sap_en": "Customer Account",
@@ -158,7 +148,6 @@ SAP_FI_AR_GLOSSARY: Dict[str, Dict[str, Any]] = {
         "ui_label": "Partita Cliente",
         "tooltip": "Riga contabile intestata a cliente (SAP: Customer Line Item)",
     },
-    # --- Pattern di Pagamento (Gergo Interno → SAP) ---
     "evento_pagamento": {
         "term_it": "Evento di Pagamento",
         "term_sap_en": "Payment Event / Clearing Event",
@@ -195,7 +184,6 @@ SAP_FI_AR_GLOSSARY: Dict[str, Dict[str, Any]] = {
         "ui_label": "Ritardo Medio",
         "tooltip": "Giorni medi di ritardo rispetto alla scadenza (DSO)",
     },
-    # --- Policy di Pagamento (Gergo Interno → SAP Friendly) ---
     "policy_settimanale": {
         "term_it": "Pagamento Settimanale",
         "term_sap_en": "Weekly Payment Pattern",
@@ -250,7 +238,6 @@ SAP_FI_AR_GLOSSARY: Dict[str, Dict[str, Any]] = {
         "ui_label": "Stesso Mese (Reg=Comp)",
         "tooltip": "Compensazione nello stesso mese della registrazione documento (non 'pagato entro il mese')",
     },
-    # --- Clustering e Segmentazione ---
     "cluster_clienti": {
         "term_it": "Cluster Clienti",
         "term_sap_en": "Customer Cluster / Customer Segment",
@@ -269,7 +256,6 @@ SAP_FI_AR_GLOSSARY: Dict[str, Dict[str, Any]] = {
         "ui_label": "Profilo",
         "tooltip": "Caratteristiche medie del cluster",
     },
-    # --- KPI e Metriche ---
     "kpi_affidabilita": {
         "term_it": "Affidabilità Pagamento",
         "term_sap_en": "Payment Reliability / Payment Score",
@@ -299,30 +285,21 @@ SAP_FI_AR_GLOSSARY: Dict[str, Dict[str, Any]] = {
     },
 }
 
-
 def get_sap_term(key: str, field: str = "ui_label") -> str:
     """Get SAP terminology from glossary."""
     return SAP_FI_AR_GLOSSARY.get(key, {}).get(field, key)
 
-
 def get_sap_tooltip(key: str) -> str:
     """Get SAP tooltip from glossary."""
     return SAP_FI_AR_GLOSSARY.get(key, {}).get("tooltip", "")
-
 
 def render_inline_glossary_icon(term_key: str) -> str:
     """Render inline glossary icon with tooltip (future: link to full glossary page)."""
     tooltip = get_sap_tooltip(term_key)
     if not tooltip:
         return ""
-    # Return markdown with info icon + tooltip
-    # Future enhancement: make icon clickable to open glossary page
-    return f" ℹ️"  # Placeholder for now, will be enhanced with st.help() or custom component
+    return f" ℹ️"
 
-
-# ================================================================================================
-# Policy Labels (Italian) - for Pattern Summary UI
-# ================================================================================================
 POLICY_LABELS_IT: Dict[str, str] = {
     "fifo": "FIFO (Più Vecchio)",
     "lifo": "LIFO (Più Recente)",
@@ -336,3 +313,4 @@ POLICY_LABELS_IT: Dict[str, str] = {
     "typeprio": "Priorità per Tipo",
     "unknown": "Sconosciuto",
 }
+

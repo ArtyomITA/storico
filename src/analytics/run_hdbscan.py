@@ -16,17 +16,15 @@ from src.utils.logging_setup import configure_logging as setup_logging
 
 LOGGER = logging.getLogger(__name__)
 
-try:  # Optional dependency; raise a friendly error if missing.
-    import hdbscan  # type: ignore
-except ImportError as exc:  # pragma: no cover - runtime environment check
+try:
+    import hdbscan
+except ImportError as exc:
     raise ImportError(
         "hdbscan package is required. Install it with 'pip install hdbscan'."
     ) from exc
 
-
 def configure_logging(level: int | str | None = logging.INFO) -> Path:
     return setup_logging(level)
-
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -64,10 +62,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     )
     return parser.parse_args(argv)
 
-
 def resolve_path(path: Path, root: Path) -> Path:
     return path if path.is_absolute() else root / path
-
 
 def load_embeddings(path: Path) -> pd.DataFrame:
     if not path.exists():
@@ -79,19 +75,16 @@ def load_embeddings(path: Path) -> pd.DataFrame:
         raise ValueError("Embeddings parquet must include a 'cliente' column.")
     return df
 
-
 def scale_features(features: pd.DataFrame, metric: str) -> np.ndarray:
     if features.empty:
         raise ValueError("Feature matrix is empty after dropping identifier columns.")
     scaler = StandardScaler()
     scaled = scaler.fit_transform(features)
-    # Avoid zero-variance rows causing NaNs by substituting zeros where necessary.
     scaled = np.nan_to_num(scaled, nan=0.0)
     if metric == "cosine":
         normalizer = Normalizer(norm="l2")
         scaled = normalizer.fit_transform(scaled)
     return scaled
-
 
 def run_hdbscan(
     data: np.ndarray,
@@ -117,7 +110,6 @@ def run_hdbscan(
     clusterer.fit(data)
     return clusterer
 
-
 def summarise_clusters(labels: np.ndarray, probabilities: np.ndarray) -> Dict[str, object]:
     total = len(labels)
     noise_mask = labels == -1
@@ -140,7 +132,6 @@ def summarise_clusters(labels: np.ndarray, probabilities: np.ndarray) -> Dict[st
         "top_clusters": top5,
     }
 
-
 def write_outputs(
     output_dir: Path,
     clusters_df: pd.DataFrame,
@@ -159,7 +150,6 @@ def write_outputs(
     }
     params_path.write_text(json.dumps(params_payload, indent=2, ensure_ascii=False))
     LOGGER.info("Wrote parameter metadata to %s", params_path)
-
 
 def main(argv: Sequence[str] | None = None) -> None:
     configure_logging()
@@ -207,6 +197,6 @@ def main(argv: Sequence[str] | None = None) -> None:
     print("Cluster assignments (first 5 rows):")
     print(clusters_df.head(5).to_string(index=False))
 
-
-if __name__ == "__main__":  # pragma: no cover
+if __name__ == "__main__":
     main()
+

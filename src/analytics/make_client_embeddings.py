@@ -31,14 +31,12 @@ LOGGER = logging.getLogger(__name__)
 DEFAULT_MAX_SAMPLES = 200
 DEFAULT_OUTPUT_DIR = Path("data/curated")
 
-
 @dataclass
 class Champion:
     """Champion model metadata."""
 
     model: str
     trained_at: str
-
 
 @dataclass
 class ShapResult:
@@ -47,12 +45,10 @@ class ShapResult:
     values: pd.DataFrame
     available: bool
 
-
 def configure_logging(level: int | str | None = logging.INFO) -> Path:
     """Initialise logging using the shared handlers."""
 
     return setup_logging(level)
-
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     """Parse CLI options."""
@@ -109,11 +105,9 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     )
     return parser.parse_args(argv)
 
-
 def resolve_path(path: Path, project_root: Path) -> Path:
     """Resolve relative paths against the project root."""
     return path if path.is_absolute() else project_root / path
-
 
 def load_champion(path: Path) -> Champion:
     """Read champion metadata from JSON."""
@@ -124,7 +118,6 @@ def load_champion(path: Path) -> Champion:
     LOGGER.info("Loaded champion model: %s", model)
     return Champion(model=model, trained_at=trained_at)
 
-
 def load_tables(paths: Dict[str, Path]) -> Dict[str, pd.DataFrame]:
     """Load required parquet tables into memory."""
     tables: Dict[str, pd.DataFrame] = {}
@@ -134,7 +127,6 @@ def load_tables(paths: Dict[str, Path]) -> Dict[str, pd.DataFrame]:
         LOGGER.info("Loading %s from %s", name, path)
         tables[name] = pd.read_parquet(path)
     return tables
-
 
 def select_positive_samples(
     features: pd.DataFrame,
@@ -165,7 +157,6 @@ def select_positive_samples(
     positives = positives.drop(columns="_sort_key")
     return positives
 
-
 def normalise_vectors(df: pd.DataFrame) -> pd.DataFrame:
     """Apply L2 normalisation across rows, guarding against zero vectors."""
     if df.empty:
@@ -175,7 +166,6 @@ def normalise_vectors(df: pd.DataFrame) -> pd.DataFrame:
     norms[norms == 0] = 1.0
     normalised = values / norms
     return pd.DataFrame(normalised, index=df.index, columns=df.columns)
-
 
 def compute_shap_catboost(
     sample_df: pd.DataFrame,
@@ -194,9 +184,9 @@ def compute_shap_catboost(
 
     feature_df, _, _, cat_indices = cat.select_features(sample_df)
     pool = Pool(data=feature_df, cat_features=cat_indices)
-    shap_values_raw = model.get_feature_importance(pool, type="ShapValues")  # type: ignore[arg-type]
+    shap_values_raw = model.get_feature_importance(pool, type="ShapValues")
     shap_values = np.asarray(shap_values_raw)
-    shap_matrix = shap_values[:, :-1]  # last column is expected value
+    shap_matrix = shap_values[:, :-1]
     shap_df = pd.DataFrame(
         np.abs(shap_matrix),
         index=sample_df.index,
@@ -206,7 +196,6 @@ def compute_shap_catboost(
     client_means = normalise_vectors(client_means)
     client_means = client_means.add_prefix("shap_")
     return ShapResult(values=client_means, available=True)
-
 
 def _autogluon_tree_model_name(predictor: TabularPredictor, candidates: Iterable[str]) -> Optional[str]:
     """Return the first tree-based model present in the leaderboard order."""
@@ -222,11 +211,9 @@ def _autogluon_tree_model_name(predictor: TabularPredictor, candidates: Iterable
         lower = name.lower()
         if any(keyword in lower for keyword in tree_keywords):
             if "weightedensemble" in lower:
-                # Prefer base learners over ensembles
                 continue
             return name
     return None
-
 
 def compute_shap_autogluon(
     sample_df: pd.DataFrame,
@@ -251,7 +238,7 @@ def compute_shap_autogluon(
     transformed = predictor.transform_features(sample_df, model=model_name)
     shap_explainer = shap.TreeExplainer(model.model)
     shap_values = shap_explainer.shap_values(transformed)
-    if isinstance(shap_values, list):  # pragma: no cover - older SHAP versions
+    if isinstance(shap_values, list):
         shap_matrix = np.abs(np.asarray(shap_values[-1]))
     else:
         shap_matrix = np.abs(shap_values)
@@ -267,7 +254,6 @@ def compute_shap_autogluon(
     client_means = client_means.add_prefix("shap_")
     return ShapResult(values=client_means, available=True)
 
-
 def prepare_policy_scores(df: pd.DataFrame) -> pd.DataFrame:
     """Prefix policy score columns and index by client."""
     if df.empty:
@@ -279,10 +265,8 @@ def prepare_policy_scores(df: pd.DataFrame) -> pd.DataFrame:
             if col != "cliente"
         }
     )
-    # Harmonise accidental numeric column names
     renamed = renamed.rename(columns={"policy_0": "policy_extra_0"})
     return renamed.set_index("cliente")
-
 
 def prepare_profiles(df: pd.DataFrame) -> pd.DataFrame:
     """Prefix profile columns and index by client."""
@@ -296,7 +280,6 @@ def prepare_profiles(df: pd.DataFrame) -> pd.DataFrame:
         }
     )
     return renamed.set_index("cliente")
-
 
 def assemble_embeddings(
     shap_result: ShapResult,
@@ -326,7 +309,6 @@ def assemble_embeddings(
     embedding = embedding.fillna(0.0)
     feature_columns = embedding.columns.tolist()
     return embedding, feature_columns
-
 
 def apply_scaler_and_pca(
     embedding: pd.DataFrame,
@@ -365,11 +347,9 @@ def apply_scaler_and_pca(
     }
     return projected_df, meta
 
-
 def ensure_output_dir(path: Path) -> None:
     """Create output directory if required."""
     path.mkdir(parents=True, exist_ok=True)
-
 
 def main(argv: Sequence[str] | None = None) -> None:
     configure_logging()
@@ -452,6 +432,6 @@ def main(argv: Sequence[str] | None = None) -> None:
     print("Sample embeddings (top 3 rows):")
     print(embeddings.head(3).to_string(index=False))
 
-
-if __name__ == "__main__":  # pragma: no cover
+if __name__ == "__main__":
     main()
+

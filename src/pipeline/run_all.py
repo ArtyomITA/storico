@@ -24,30 +24,26 @@ from src.utils.logging_setup import (
 
 LOGGER = logging.getLogger(__name__)
 
-
 def _get_data_root() -> Path:
     """Get data root: data_mock/ if USE_MOCK=true, else data/."""
     use_mock = os.getenv("USE_MOCK", "false").lower() == "true"
     return Path("data_mock" if use_mock else "data")
-
 
 CURATED_DIR = _get_data_root() / "curated"
 MODELS_DIR = Path("models")
 REPORTS_DIR = Path("reports")
 LOGS_DIR = Path("logs")
 
-# Prompt 8: Pipeline steps in correct order
 PIPELINE_STEPS = [
-    "normalize",      # Prompt 2: SAP data normalization
-    "features",       # Prompt 3: Feature engineering
-    "embeddings",     # Prompt 4: Client embeddings (PCA/UMAP)
-    "hdbscan",        # Prompt 4: HDBSCAN clustering
-    "patterns",       # Prompt 5: Pattern detection
-    "train",          # Prompt 6: Model training
-    "score",          # Prompt 7: Invoice scoring
-    "analytics",      # KPI, calibration, policy metrics
+    "normalize",
+    "features",
+    "embeddings",
+    "hdbscan",
+    "patterns",
+    "train",
+    "score",
+    "analytics",
 ]
-
 
 @dataclass(frozen=True)
 class PipelineConfig:
@@ -56,7 +52,7 @@ class PipelineConfig:
     Prompt 8: Idempotent pipeline with step flags.
     """
 
-    steps: List[str]  # Steps to execute (default: all)
+    steps: List[str]
     skip_normalize: bool
     skip_features: bool
     skip_embeddings: bool
@@ -65,9 +61,8 @@ class PipelineConfig:
     skip_train: bool
     skip_score: bool
     skip_analytics: bool
-    model_type: str  # "catboost" or "autogluon"
+    model_type: str
     log_level: str
-
 
 def parse_args(argv: Sequence[str] | None = None) -> PipelineConfig:
     """Parse CLI options for the unified pipeline runner."""
@@ -148,8 +143,7 @@ def parse_args(argv: Sequence[str] | None = None) -> PipelineConfig:
         action="store_true",
         help="Compute policy classifier metrics (confusion matrix, accuracy, uplift) on events.",
     )
-    
- # Individual step flags for orchestrator
+
     parser.add_argument(
         "--step",
         choices=[
@@ -165,7 +159,7 @@ def parse_args(argv: Sequence[str] | None = None) -> PipelineConfig:
         action="store_true",
         help="Skip pre-training validation checks (use with caution).",
     )
-    
+
     parser.add_argument(
         "--verbose",
         action="store_true",
@@ -192,10 +186,9 @@ def parse_args(argv: Sequence[str] | None = None) -> PipelineConfig:
         make_kpi=args.make_kpi,
         make_calibration=args.make_calibration,
         make_policy_metrics=args.make_policy_metrics,
-        step=args.step,  
-        skip_validation=args.skip_validation,  
+        step=args.step,
+        skip_validation=args.skip_validation,
     )
-
 
 class PipelineRunner:
     """Execute pipeline steps sequentially with structured logging."""
@@ -205,7 +198,6 @@ class PipelineRunner:
         self.project_root = Path(__file__).resolve().parents[2]
 
     def run(self) -> None:
- # Map step names to methods - Prompt 8: Complete DAG with new modules
         step_registry: Dict[str, Tuple[str, Callable[[], object]]] = {
             "normalize": ("Normalize SAP data (Prompt 2)", self.run_normalize_sap),
             "ingest": ("Ingest raw datasets", self.run_ingestion),
@@ -227,8 +219,7 @@ class PipelineRunner:
             "calibration": ("Compute calibration diagnostics", self.run_calibration),
             "policy": ("Compute policy classifier metrics", self.run_policy_metrics),
         }
-        
- # If --step specified, run only that step
+
         if self.config.step:
             if self.config.step not in step_registry:
                 raise ValueError(f"Unknown step: {self.config.step}")
@@ -236,43 +227,35 @@ class PipelineRunner:
             LOGGER.info(f"Running single step: {self.config.step}")
             self._run_step(name, callback)
             return
-        
-        # Full pipeline execution - Prompt 8: normalize → features → embeddings → HDBSCAN → patterns → train → score → analytics
+
         steps: List[Tuple[str, Callable[[], object]]] = []
-        
-        # Phase 1: Data preparation
+
         steps.append(step_registry["normalize"])
         steps.append(step_registry["ingest"])
         steps.append(step_registry["events"])
         steps.append(step_registry["labels"])
-        
-        # Phase 2: Feature engineering
+
         steps.append(step_registry["features"])
-        
+
         if not self.config.skip_validation:
             steps.append(step_registry["validate"])
-        
-        # Phase 3: Client segmentation (embeddings + HDBSCAN)
+
         if self.config.make_embeddings:
             steps.append(step_registry["embeddings"])
-        
+
         steps.append(step_registry["projection"])
-        
+
         if self.config.run_hdbscan:
             steps.append(step_registry["hdbscan"])
-        
+
         steps.append(step_registry["clusters"])
-        
-        # Phase 4: Pattern detection (Prompt 5)
+
         steps.append(step_registry["patterns"])
-        
-        # Phase 5: Model training (Prompt 6)
+
         steps.append(step_registry["train"])
-        
-        # Phase 6: Invoice scoring (Prompt 7)
+
         steps.append(step_registry["score"])
-        
-        # Phase 7: Analytics artifacts
+
         steps.append(step_registry["rules"])
         steps.append(step_registry["table"])
         steps.append(step_registry["reports"])
@@ -292,10 +275,8 @@ class PipelineRunner:
     def _run_step(self, name: str, callback: Callable[[], object]) -> None:
         try:
             callback()
-        except Exception as exc:  # pragma: no cover - defensive guard
+        except Exception as exc:
             raise RuntimeError(f"Pipeline step '{name}' failed") from exc
-
-    # --- core steps (Prompt 8: DAG order) -------------------------------------------
 
     @log_timed("Normalize SAP data (Prompt 2)")
     def run_normalize_sap(self) -> None:
@@ -304,21 +285,19 @@ class PipelineRunner:
         if output_path.exists():
             LOGGER.info(f"Skipping normalize: {output_path} already exists")
             return
-        
+
         LOGGER.info("Running SAP normalization (Prompt 2)...")
         from src.data import normalize_sap
-        
-        # Assume default paths; override with CLI args if needed
+
         normalize_sap.main([])
 
     @log_timed("Ingest raw datasets")
     def run_ingestion(self) -> None:
- # Idempotent - check if line_items already exists
         output_path = self.project_root / CURATED_DIR / "line_items.parquet"
         if output_path.exists():
             LOGGER.info(f"Skipping ingest: {output_path} already exists")
             return
-        
+
         argv: List[str] = []
         for pattern in self.config.input_patterns:
             argv.extend(["--input", pattern])
@@ -328,34 +307,32 @@ class PipelineRunner:
 
     @log_timed("Build clearing events")
     def run_build_events(self) -> None:
- # Idempotent - check prerequisites and output
         line_items_path = self.project_root / CURATED_DIR / "line_items.parquet"
         if not line_items_path.exists():
             LOGGER.warning(f"Prerequisite missing: {line_items_path}. Run 'ingest' step first.")
             return
-        
+
         events_path = self.project_root / CURATED_DIR / "events.parquet"
         if events_path.exists():
             LOGGER.info(f"Skipping events build: {events_path} already exists")
             return
-        
+
         build_events.configure_logging()
         build_events.build_events_tables(self.project_root)
 
     @log_timed("Generate training labels")
     def run_make_labels(self) -> dict[str, int] | None:
- # Idempotent - check prerequisites and output
         events_path = self.project_root / CURATED_DIR / "events.parquet"
         if not events_path.exists():
             LOGGER.warning(f"Prerequisite missing: {events_path}. Run 'events' step first.")
             return None
-        
+
         output_path = self.project_root / CURATED_DIR / "train_pointwise.parquet"
         if output_path.exists():
             LOGGER.info(f"Skipping labels: {output_path} already exists")
             df = pd.read_parquet(output_path)
             return {"rows": len(df)}
-        
+
         make_labels.configure_logging()
         labelled = make_labels.build_pointwise_labels(self.project_root)
         if labelled.empty:
@@ -367,18 +344,17 @@ class PipelineRunner:
 
     @log_timed("Engineer features & client profiles")
     def run_make_features(self) -> dict[str, int] | None:
- # Idempotent - check prerequisites and output
         labels_path = self.project_root / CURATED_DIR / "train_pointwise.parquet"
         if not labels_path.exists():
             LOGGER.warning(f"Prerequisite missing: {labels_path}. Run 'labels' step first.")
             return None
-        
+
         output_path = self.project_root / CURATED_DIR / "train_features.parquet"
         if output_path.exists():
             LOGGER.info(f"Skipping features: {output_path} already exists")
             df = pd.read_parquet(output_path)
             return {"rows": len(df)}
-        
+
         make_features.configure_logging()
         datasets = make_features.load_curated_datasets(self.project_root)
         client_profiles = make_features.compute_client_profiles(
@@ -513,78 +489,70 @@ class PipelineRunner:
 
     @log_timed("Train model & update champion")
     def run_training(self) -> None:
- # Idempotent - check prerequisites
         features_path = self.project_root / CURATED_DIR / "train_features.parquet"
         if not features_path.exists():
             LOGGER.warning(f"Prerequisite missing: {features_path}. Run 'features' step first.")
             return
-        
-        # Check if model already trained (champion.json exists)
+
         champion_path = self.project_root / MODELS_DIR / "champion.json"
         if champion_path.exists():
             LOGGER.info(f"Model already trained: {champion_path} exists. Use --force to retrain.")
             return
-        
+
         argv = ["--model", self.config.model]
         train.run(argv)
 
     @log_timed("Compute pattern detectors (Prompt 5)")
     def run_pattern_detectors(self) -> None:
         """Execute src/analytics/pattern_detectors.py to generate client_patterns.parquet."""
-        # Check prerequisites
         profiles_path = self.project_root / CURATED_DIR / "client_profiles.parquet"
         clusters_path = self.project_root / CURATED_DIR / "client_clusters.parquet"
-        
+
         if not profiles_path.exists():
             LOGGER.warning(f"Prerequisite missing: {profiles_path}. Run 'features' step first.")
             return
-        
-        # Check output (Prompt 5 produces client_patterns.parquet)
+
         output_path = self.project_root / CURATED_DIR / "client_patterns.parquet"
         if output_path.exists():
             LOGGER.info(f"Pattern detectors already built: {output_path} exists")
             return
-        
+
         LOGGER.info("Running pattern detectors (Prompt 5)...")
         from src.analytics import pattern_detectors
-        
+
         pattern_detectors.main([])
 
     @log_timed("Train pointwise model (Prompt 6)")
     def run_pointwise_trainer(self) -> None:
         """Execute src/training/pointwise_trainer.py to train CatBoost/AutoGluon."""
-        # Check prerequisites
         features_path = self.project_root / CURATED_DIR / "train_features.parquet"
         patterns_path = self.project_root / CURATED_DIR / "client_patterns.parquet"
-        
+
         if not features_path.exists():
             LOGGER.warning(f"Prerequisite missing: {features_path}. Run 'features' step first.")
             return
         if not patterns_path.exists():
             LOGGER.warning(f"Prerequisite missing: {patterns_path}. Run 'patterns' step first.")
             return
-        
-        # Check output (Prompt 6 produces champion.json)
+
         champion_path = self.project_root / MODELS_DIR / "champion.json"
         if champion_path.exists():
             LOGGER.info(f"Model already trained: {champion_path} exists")
             return
-        
+
         LOGGER.info("Running pointwise trainer (Prompt 6)...")
         from src.training import pointwise_trainer
-        
-        # Use model_type from config if available, otherwise default to catboost
+
         model_arg = getattr(self.config, "model_type", "catboost")
         pointwise_trainer.main(["--model", model_arg])
 
     @log_timed("Score open invoices (Prompt 7)")
     def run_score_open_invoices(self) -> None:
         """Execute src/inference/score_open_invoices.py to generate predictions."""
-        # Check prerequisites
         champion_path = self.project_root / MODELS_DIR / "champion.json"
         patterns_path = self.project_root / CURATED_DIR / "client_patterns.parquet"
         line_items_path = self.project_root / CURATED_DIR / "line_items.parquet"
-        
+
         if not champion_path.exists():
             LOGGER.warning(f"Prerequisite missing: {champion_path}. Run 'train' step first.")
             return
@@ -594,32 +562,29 @@ class PipelineRunner:
         if not line_items_path.exists():
             LOGGER.warning(f"Prerequisite missing: {line_items_path}. Run 'ingest' step first.")
             return
-        
-        # Check output (Prompt 7 produces event_policy_predictions.parquet)
+
         output_path = self.project_root / CURATED_DIR / "event_policy_predictions.parquet"
         if output_path.exists():
             LOGGER.info(f"Invoice scoring already completed: {output_path} exists")
             return
-        
+
         LOGGER.info("Running invoice scoring (Prompt 7)...")
         from src.inference import score_open_invoices
-        
+
         score_open_invoices.main([])
 
     @log_timed("Backtest policy rules")
     def run_rules_backtest(self) -> None:
- # Idempotent - check prerequisites
         patterns_path = self.project_root / CURATED_DIR / "client_pattern_scores.parquet"
         if not patterns_path.exists():
             LOGGER.warning(f"Prerequisite missing: {patterns_path}. Run 'patterns' step first.")
             return
-        
-        # Check output
+
         output_path = self.project_root / CURATED_DIR / "client_rules_accuracy.parquet"
         if output_path.exists():
             LOGGER.info(f"Rules backtest already completed: {output_path} exists")
             return
-        
+
         rules_backtest.configure_logging()
         rules_backtest.main()
 
@@ -631,7 +596,6 @@ class PipelineRunner:
         cat_metrics_path = curated_dir / "client_model_metrics_catboost.parquet"
         auto_metrics_path = curated_dir / "client_model_metrics_autogluon.parquet"
 
- # Check output first (idempotent)
         output_path = self.project_root / PATTERN_OUTPUT
         if output_path.exists():
             LOGGER.info(f"Pattern table already created: {output_path} exists")
@@ -674,40 +638,34 @@ class PipelineRunner:
 
     @log_timed("Render pattern card reports")
     def run_pattern_reports(self) -> dict[str, int]:
- # Idempotent - check prerequisites
         table_path = self.project_root / PATTERN_OUTPUT
         if not table_path.exists():
             LOGGER.warning(f"Prerequisite missing: {table_path}. Run 'table' step first.")
             return {"rows": 0}
-        
-        # Check output (reports directory with at least one PNG)
+
         reports_dir = self.project_root / REPORTS_DIR
         existing_reports = list(reports_dir.glob("pattern_*.png"))
         if existing_reports:
             LOGGER.info(f"Pattern reports already generated: {len(existing_reports)} files in {reports_dir}")
             return {"rows": len(existing_reports)}
-        
+
         make_report.configure_logging()
         generated = make_report.generate_reports()
         LOGGER.info("Generated %s pattern card report(s).", len(generated))
         return {"rows": len(generated)}
 
-    # --- optional analytics ---------------------------------------------------------
-
     @log_timed("Create client embeddings")
     def run_make_embeddings(self) -> None:
- # Idempotent - check prerequisites
         features_path = self.project_root / CURATED_DIR / "train_features.parquet"
         if not features_path.exists():
             LOGGER.warning(f"Prerequisite missing: {features_path}. Run 'features' step first.")
             return
-        
-        # Check output
+
         output_path = self.project_root / CURATED_DIR / "client_embeddings.parquet"
         if output_path.exists():
             LOGGER.info(f"Client embeddings already created: {output_path} exists")
             return
-        
+
         argv = []
         make_client_embeddings.configure_logging()
         make_client_embeddings.main(argv)
@@ -718,13 +676,12 @@ class PipelineRunner:
         if not embeddings_path.exists():
             LOGGER.info("Skipping embedding projection; %s not found.", embeddings_path)
             return
-        
- # Idempotent - check output
+
         output_path = self.project_root / CURATED_DIR / "client_embedding_2d.parquet"
         if output_path.exists():
             LOGGER.info(f"Embedding projection already computed: {output_path} exists")
             return
-        
+
         argv = [
             "--embeddings",
             str(embeddings_path),
@@ -744,13 +701,12 @@ class PipelineRunner:
         if not embeddings_path.exists():
             LOGGER.info("Skipping HDBSCAN: embeddings parquet not found at %s", embeddings_path)
             return
-        
- # Idempotent - check output
+
         output_path = self.project_root / CURATED_DIR / "client_clusters.parquet"
         if output_path.exists():
             LOGGER.info(f"HDBSCAN clustering already computed: {output_path} exists")
             return
-        
+
         argv = [
             "--embeddings",
             str(embeddings_path),
@@ -770,76 +726,68 @@ class PipelineRunner:
         if not clusters_path.exists():
             LOGGER.info("Skipping cluster summary; %s not available.", clusters_path)
             return
-        
- # Idempotent - check output
+
         output_path = self.project_root / CURATED_DIR / "cluster_summary.parquet"
         if output_path.exists():
             LOGGER.info(f"Cluster profiles already computed: {output_path} exists")
             return
-        
+
         cluster_profile.configure_logging()
         cluster_profile.main()
 
     @log_timed("Compute ranking KPIs")
     def run_kpi_ranking(self) -> None:
- # Idempotent - check prerequisites
         champion_path = self.project_root / MODELS_DIR / "champion.json"
         if not champion_path.exists():
             LOGGER.warning(f"Prerequisite missing: {champion_path}. Run 'train' step first.")
             return
-        
-        # Check output
+
         output_path = self.project_root / CURATED_DIR / "kpi_ranking.parquet"
         if output_path.exists():
             LOGGER.info(f"KPI ranking already computed: {output_path} exists")
             return
-        
+
         from src.analytics import kpi_ranking
 
         kpi_ranking.main()
 
     @log_timed("Compute calibration diagnostics")
     def run_calibration(self) -> None:
- # Idempotent - check prerequisites
         champion_path = self.project_root / MODELS_DIR / "champion.json"
         if not champion_path.exists():
             LOGGER.warning(f"Prerequisite missing: {champion_path}. Run 'train' step first.")
             return
-        
-        # Check output
+
         output_path = self.project_root / CURATED_DIR / "calibration_summary.parquet"
         if output_path.exists():
             LOGGER.info(f"Calibration diagnostics already computed: {output_path} exists")
             return
-        
+
         from src.analytics import calibration
 
         calibration.main()
 
     @log_timed("Compute policy classifier metrics")
     def run_policy_metrics(self) -> None:
- # Idempotent - check prerequisites
         events_path = self.project_root / CURATED_DIR / "events.parquet"
         if not events_path.exists():
             LOGGER.warning(f"Prerequisite missing: {events_path}. Run 'events' step first.")
             return
-        
-        # Check output
+
         output_path = self.project_root / CURATED_DIR / "event_policy_metrics.parquet"
         if output_path.exists():
             LOGGER.info(f"Policy metrics already computed: {output_path} exists")
             return
-        
+
         from src.analytics import event_policy_metrics
 
         event_policy_metrics.main()
-
 
 def main(argv: Sequence[str] | None = None) -> None:
     config = parse_args(argv)
     runner = PipelineRunner(config)
     runner.run()
 
-
-if __name__ == "__main__":  # pragma: no cover
+if __name__ == "__main__":
     main()
+

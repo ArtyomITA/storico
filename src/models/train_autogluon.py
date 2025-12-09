@@ -6,10 +6,10 @@ import logging
 from pathlib import Path
 from typing import Dict, List, Tuple, cast
 
-try:  # AutoGluon>=1.0 exposes helper, but guard older versions
+try:
     from autogluon.common.utils.resource_utils import get_gpu_count_torch
-except ImportError:  # pragma: no cover - fallback for older releases
-    def get_gpu_count_torch() -> int:  # type: ignore
+except ImportError:
+    def get_gpu_count_torch() -> int:
         return 0
 
 import numpy as np
@@ -25,7 +25,6 @@ MODELS_DIR = Path("models")
 PREDICTOR_DIR = MODELS_DIR / "autogluon"
 CLIENT_METRICS_PATH = CURATED_DIR / "client_model_metrics_autogluon.parquet"
 TRAIN_FRACTION = 0.7
-
 
 def configure_logging(level: int | str | None = logging.INFO) -> Path:
     return setup_logging(level)
@@ -46,16 +45,15 @@ def detect_compute_environment() -> Dict[str, object]:
             info["torch_device_name"] = torch.cuda.get_device_name(0)
         else:
             info["torch_device_name"] = "cpu"
-    except Exception as exc:  # pragma: no cover - diagnostic only
+    except Exception as exc:
         LOGGER.warning("Unable to inspect torch CUDA status: %s", exc)
         info["torch_device_name"] = "unavailable"
 
-    # AutoGluon helper (falls back to torch internally)
     try:
-        from autogluon.common.utils.resource_utils import get_gpu_count_torch  # type: ignore
+        from autogluon.common.utils.resource_utils import get_gpu_count_torch
 
         ag_gpu_count = int(get_gpu_count_torch())
-    except Exception as exc:  # pragma: no cover
+    except Exception as exc:
         LOGGER.warning("AutoGluon GPU probe failed: %s", exc)
         ag_gpu_count = 0
     info["autogluon_gpu_count"] = ag_gpu_count
@@ -64,7 +62,7 @@ def detect_compute_environment() -> Dict[str, object]:
         from catboost.utils import get_gpu_device_count
 
         info["catboost_gpu_count"] = int(get_gpu_device_count())
-    except Exception:  # pragma: no cover - catboost optional
+    except Exception:
         info["catboost_gpu_count"] = 0
 
     LOGGER.info(
@@ -76,9 +74,6 @@ def detect_compute_environment() -> Dict[str, object]:
         info["catboost_gpu_count"],
     )
     return info
-
-
-
 
 def load_curated_tables(project_root: Path) -> Dict[str, pd.DataFrame]:
     curated_dir = project_root / CURATED_DIR
@@ -100,7 +95,6 @@ def load_curated_tables(project_root: Path) -> Dict[str, pd.DataFrame]:
         tables[name] = pd.read_parquet(path)
     return tables
 
-
 def enrich_features(features: pd.DataFrame, event_items: pd.DataFrame) -> pd.DataFrame:
     df = features.copy()
     if not event_items.empty:
@@ -120,7 +114,6 @@ def enrich_features(features: pd.DataFrame, event_items: pd.DataFrame) -> pd.Dat
         df[col] = df[col].fillna("UNKNOWN").astype(str)
     return df
 
-
 def temporal_split(df: pd.DataFrame, events: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame]:
     if "data_pareggio" not in events.columns:
         raise ValueError("events table must include data_pareggio")
@@ -138,13 +131,11 @@ def temporal_split(df: pd.DataFrame, events: pd.DataFrame) -> Tuple[pd.DataFrame
         train_df = train_df.iloc[:-len(test_df)]
     return train_df, test_df
 
-
 def select_features(df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.Series]:
     target = df["label"].astype(int)
     drop_cols = ["label", "data_pareggio", "cliente", "event_key", "numero_documento"]
     feature_df = df.drop(columns=[col for col in drop_cols if col in df.columns])
     return feature_df, target
-
 
 def evaluate_invoice_metrics(probs: np.ndarray, labels: np.ndarray) -> Dict[str, float]:
     metrics: Dict[str, float] = {}
@@ -158,7 +149,6 @@ def evaluate_invoice_metrics(probs: np.ndarray, labels: np.ndarray) -> Dict[str,
         metrics["log_loss"] = float(log_loss(labels, clipped_probs, labels=[0, 1]))
         metrics["auc_pr"] = float(average_precision_score(labels, probs))
     return metrics
-
 
 def evaluate_event_metrics(df: pd.DataFrame, probs: np.ndarray) -> Tuple[pd.DataFrame, pd.DataFrame]:
     df = df.copy()
@@ -203,7 +193,6 @@ def evaluate_event_metrics(df: pd.DataFrame, probs: np.ndarray) -> Tuple[pd.Data
 
     return pd.DataFrame(event_records), pd.DataFrame(client_rows)
 
-
 def save_client_metrics(df: pd.DataFrame, project_root: Path) -> Path:
     curated_dir = project_root / CURATED_DIR
     curated_dir.mkdir(parents=True, exist_ok=True)
@@ -211,7 +200,6 @@ def save_client_metrics(df: pd.DataFrame, project_root: Path) -> Path:
     df.to_parquet(output_path, compression="snappy", index=False)
     LOGGER.info("Saved client metrics to %s", output_path)
     return output_path
-
 
 def print_comparison(autogluon_metrics: pd.DataFrame, catboost_metrics: pd.DataFrame) -> None:
     if autogluon_metrics.empty:
@@ -235,7 +223,6 @@ def print_comparison(autogluon_metrics: pd.DataFrame, catboost_metrics: pd.DataF
     ]
     existing_cols = [col for col in columns if col in merged.columns]
     print(merged[existing_cols].head(5).to_string(index=False))
-
 
 def train_autogluon(project_root: Path, tables: Dict[str, pd.DataFrame]) -> Tuple[TabularPredictor, pd.DataFrame, pd.DataFrame, Dict[str, float]]:
     features = enrich_features(tables["train_features"], tables["event_items"])
@@ -298,7 +285,6 @@ def train_autogluon(project_root: Path, tables: Dict[str, pd.DataFrame]) -> Tupl
 
     return predictor, client_metrics, leaderboard_df, invoice_metrics
 
-
 def main() -> None:
     configure_logging()
     project_root = Path(__file__).resolve().parents[2]
@@ -316,6 +302,6 @@ def main() -> None:
     predictor_path = project_root / PREDICTOR_DIR
     LOGGER.info("AutoGluon predictor saved under %s", predictor_path)
 
-
-if __name__ == "__main__":  # pragma: no cover
+if __name__ == "__main__":
     main()
+

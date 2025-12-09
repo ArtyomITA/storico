@@ -37,7 +37,6 @@ CARDINALITY_BUCKETS = {
     "k>=4": (4, float("inf")),
 }
 
-
 @dataclass
 class PolicyMetrics:
     """Container for policy classifier performance metrics."""
@@ -52,11 +51,9 @@ class PolicyMetrics:
     uplift_absolute: float
     uplift_relative: float
 
-
 def configure_logging(level: int | str | None = logging.INFO) -> Path:
     """Configure shared logging handlers for CLI execution."""
     return setup_logging(level)
-
 
 def load_policy_data(project_root: Path) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """Load per-event policy scores and predictions."""
@@ -75,41 +72,33 @@ def load_policy_data(project_root: Path) -> Tuple[pd.DataFrame, pd.DataFrame]:
     LOGGER.info("Loaded %d policy score events and %d predictions", len(scores), len(predictions))
     return scores, predictions
 
-
 def build_confusion_matrix(predictions: pd.DataFrame) -> pd.DataFrame:
     """Build confusion matrix with row normalization (true vs predicted policy)."""
     if predictions.empty or "policy_true" not in predictions.columns or "policy_pred" not in predictions.columns:
         LOGGER.warning("Insufficient data for confusion matrix; returning empty.")
         return pd.DataFrame()
 
-    # Get unique policy labels
     all_policies = sorted(set(predictions["policy_true"].unique()) | set(predictions["policy_pred"].unique()))
 
-    # Build raw confusion matrix
     confusion = pd.crosstab(
         predictions["policy_true"], predictions["policy_pred"], rownames=["true"], colnames=["pred"], dropna=False
     )
 
-    # Ensure all policies are represented
     for policy in all_policies:
         if policy not in confusion.index:
             confusion.loc[policy] = 0
         if policy not in confusion.columns:
             confusion[policy] = 0
 
-    # Sort by policy name
     confusion = confusion.loc[sorted(confusion.index), sorted(confusion.columns)]
 
-    # Normalize by row (true label) to get percentages
     row_sums = confusion.sum(axis=1)
     confusion_norm = confusion.div(row_sums, axis=0).fillna(0.0)
 
-    # Reset index for storage
     confusion_norm = confusion_norm.reset_index()
     confusion_norm = confusion_norm.rename(columns={"true": "policy_true"})
 
     return confusion_norm
-
 
 def compute_top1_accuracy(predictions: pd.DataFrame) -> float:
     """Compute top-1 accuracy: fraction of events where predicted policy matches true policy."""
@@ -119,13 +108,11 @@ def compute_top1_accuracy(predictions: pd.DataFrame) -> float:
     matches = (predictions["policy_true"] == predictions["policy_pred"]).sum()
     return float(matches) / len(predictions)
 
-
 def compute_top2_hit_rate(predictions: pd.DataFrame) -> float:
     """Compute top-2 hit rate: fraction of events where true policy is in top-2 predicted policies."""
     if predictions.empty:
         return 0.0
 
-    # Extract probability columns
     proba_cols = [col for col in predictions.columns if col.startswith("proba_")]
     if not proba_cols:
         LOGGER.warning("No probability columns found; top-2 hit rate defaulting to 0.")
@@ -137,7 +124,6 @@ def compute_top2_hit_rate(predictions: pd.DataFrame) -> float:
         if pd.isna(true_policy):
             continue
 
-        # Get top-2 policies by probability
         proba_dict = {col.replace("proba_", ""): row[col] for col in proba_cols if col in row.index}
         top2_policies = sorted(proba_dict.items(), key=lambda x: x[1], reverse=True)[:2]
         top2_names = [p[0] for p in top2_policies]
@@ -147,7 +133,6 @@ def compute_top2_hit_rate(predictions: pd.DataFrame) -> float:
 
     return float(hits) / len(predictions)
 
-
 def compute_recall_for_policy(scores: pd.DataFrame, policy_name: str) -> float:
     """Compute average recall@k for a given policy across events."""
     if scores.empty or policy_name not in scores.columns:
@@ -156,21 +141,17 @@ def compute_recall_for_policy(scores: pd.DataFrame, policy_name: str) -> float:
     policy_recalls = scores[policy_name].fillna(0.0)
     return float(policy_recalls.mean())
 
-
 def compute_uplift(
     scores: pd.DataFrame, predictions: pd.DataFrame, baseline_policy: str = BASELINE_POLICY
 ) -> Tuple[float, float, float]:
     """Compute recall uplift: predicted policy vs baseline policy."""
-    # Merge scores with predictions to get predicted policy per event
     merged = scores.merge(predictions[["event_key", "policy_pred"]], on="event_key", how="inner")
 
     if merged.empty:
         return 0.0, 0.0, 0.0
 
-    # Compute baseline recall (using FIFO or specified baseline)
     baseline_recall = compute_recall_for_policy(merged, baseline_policy)
 
-    # Compute predicted recall (average recall of predicted policy per event)
     predicted_recalls = []
     for _, row in merged.iterrows():
         pred_policy = row.get("policy_pred")
@@ -181,18 +162,14 @@ def compute_uplift(
 
     predicted_recall = float(np.mean(predicted_recalls)) if predicted_recalls else 0.0
 
-    # Compute uplift
     uplift_absolute = predicted_recall - baseline_recall
     uplift_relative = (uplift_absolute / baseline_recall * 100.0) if baseline_recall > 0 else 0.0
 
     return baseline_recall, predicted_recall, uplift_relative
 
-
 def segment_by_cardinality(scores: pd.DataFrame, events: pd.DataFrame) -> Dict[str, pd.DataFrame]:
     """Segment scores by event cardinality buckets."""
-    # Load events to get cardinality (if not already in scores)
     if "cardinality" not in scores.columns and events is not None:
-        # Compute cardinality from event_items
         try:
             event_items_path = CURATED_DIR / "event_items.parquet"
             if event_items_path.exists():
@@ -217,7 +194,6 @@ def segment_by_cardinality(scores: pd.DataFrame, events: pd.DataFrame) -> Dict[s
 
     return segments if segments else {"all": scores}
 
-
 def get_top_volume_clients(scores: pd.DataFrame, top_n: int = 10) -> List[str]:
     """Identify top-N clients by event volume."""
     if "cliente" not in scores.columns:
@@ -225,14 +201,12 @@ def get_top_volume_clients(scores: pd.DataFrame, top_n: int = 10) -> List[str]:
     client_counts = scores["cliente"].value_counts().head(top_n)
     return client_counts.index.tolist()
 
-
 def evaluate_policy_metrics(
     scores: pd.DataFrame, predictions: pd.DataFrame, events: Optional[pd.DataFrame] = None
 ) -> List[PolicyMetrics]:
     """Compute policy classifier metrics for all segments."""
     metrics_list: List[PolicyMetrics] = []
 
-    # Global metrics
     baseline_recall, predicted_recall, uplift_relative = compute_uplift(scores, predictions, BASELINE_POLICY)
     top1_acc = compute_top1_accuracy(predictions)
     top2_hit = compute_top2_hit_rate(predictions)
@@ -251,7 +225,6 @@ def evaluate_policy_metrics(
         )
     )
 
-    # Cardinality segments
     card_segments = segment_by_cardinality(scores, events)
     for bucket_name, bucket_scores in card_segments.items():
         bucket_preds = predictions[predictions["event_key"].isin(bucket_scores["event_key"])]
@@ -278,7 +251,6 @@ def evaluate_policy_metrics(
             )
         )
 
-    # Top-volume clients
     top_clients = get_top_volume_clients(scores)
     for cliente in top_clients:
         client_scores = scores[scores["cliente"] == cliente]
@@ -309,12 +281,10 @@ def evaluate_policy_metrics(
 
     return metrics_list
 
-
 def print_summary(metrics_list: List[PolicyMetrics], confusion: pd.DataFrame) -> None:
     """Print console summary of policy classifier metrics."""
     LOGGER.info("=== Policy Classifier Metrics Summary ===")
 
-    # Global metrics
     global_metrics = [m for m in metrics_list if m.segment_type == "global"]
     for m in global_metrics:
         LOGGER.info(
@@ -331,7 +301,6 @@ def print_summary(metrics_list: List[PolicyMetrics], confusion: pd.DataFrame) ->
             m.uplift_relative,
         )
 
-    # Cardinality buckets
     bucket_metrics = [m for m in metrics_list if m.segment_type == "cardinality_bucket"]
     if bucket_metrics:
         LOGGER.info("=== Cardinality Bucket Metrics ===")
@@ -344,7 +313,6 @@ def print_summary(metrics_list: List[PolicyMetrics], confusion: pd.DataFrame) ->
                 m.uplift_relative,
             )
 
-    # Top clients
     client_metrics = [m for m in metrics_list if m.segment_type == "cliente"]
     if client_metrics:
         LOGGER.info("=== Top Client Metrics ===")
@@ -358,18 +326,15 @@ def print_summary(metrics_list: List[PolicyMetrics], confusion: pd.DataFrame) ->
                 m.uplift_relative,
             )
 
-    # Confusion matrix summary
     if not confusion.empty:
         LOGGER.info("=== Confusion Matrix (normalized by row) ===")
         LOGGER.info("Confusion matrix has %d rows (true policies) × %d columns (predicted policies)", len(confusion), len(confusion.columns) - 1)
-
 
 def save_outputs(metrics_list: List[PolicyMetrics], confusion: pd.DataFrame, project_root: Path) -> Tuple[Path, Path]:
     """Save policy metrics and confusion matrix to Parquet files."""
     curated_dir = project_root / "data" / "curated"
     curated_dir.mkdir(parents=True, exist_ok=True)
 
-    # Convert metrics to DataFrame
     metrics_records = [
         {
             "segment_type": m.segment_type,
@@ -396,7 +361,6 @@ def save_outputs(metrics_list: List[PolicyMetrics], confusion: pd.DataFrame, pro
     LOGGER.info("Saved confusion matrix to %s", confusion_path)
     return metrics_path, confusion_path
 
-
 def main() -> None:
     """Main entry point for policy classifier metrics evaluation."""
     configure_logging()
@@ -405,7 +369,6 @@ def main() -> None:
     LOGGER.info("Loading policy data...")
     scores, predictions = load_policy_data(project_root)
 
-    # Load events for cardinality segmentation
     events_path = project_root / "data" / "curated" / "events.parquet"
     events = pd.read_parquet(events_path) if events_path.exists() else None
 
@@ -420,6 +383,6 @@ def main() -> None:
 
     LOGGER.info("Policy metrics evaluation complete.")
 
-
-if __name__ == "__main__":  # pragma: no cover
+if __name__ == "__main__":
     main()
+

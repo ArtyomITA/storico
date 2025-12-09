@@ -25,7 +25,6 @@ LOGGER = logging.getLogger(__name__)
 DEFAULT_TRAIN_FEATURES = Path("data/curated/train_features.parquet")
 DEFAULT_OUTPUT_DIR = Path("models")
 
-
 @dataclass
 class ChampionMetrics:
     """Container for the metrics persisted to ``champion.json``."""
@@ -33,12 +32,10 @@ class ChampionMetrics:
     auc_pr: float
     match_rate: float
 
-
 def configure_logging(level: int | str | None = logging.INFO) -> Path:
     """Initialise module logging using the shared configuration."""
 
     return setup_logging(level)
-
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     """Parse CLI arguments for the training orchestrator."""
@@ -78,17 +75,14 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     )
     return parser.parse_args(argv)
 
-
 def set_random_seed(seed: int) -> None:
     """Seed Python and NumPy RNGs for reproducibility."""
     random.seed(seed)
     np.random.seed(seed)
 
-
 def resolve_project_root() -> Path:
     """Return the repository root based on the file location."""
     return Path(__file__).resolve().parents[2]
-
 
 def resolve_path(path: Optional[Path], project_root: Path) -> Optional[Path]:
     """Resolve a possibly-relative path against the project root."""
@@ -96,12 +90,10 @@ def resolve_path(path: Optional[Path], project_root: Path) -> Optional[Path]:
         return None
     return path if path.is_absolute() else project_root / path
 
-
 def ensure_output_dir(path: Path) -> Path:
     """Ensure the output directory exists and return it."""
     path.mkdir(parents=True, exist_ok=True)
     return path
-
 
 def override_train_features(
     tables: Dict[str, pd.DataFrame],
@@ -115,13 +107,11 @@ def override_train_features(
     LOGGER.info("Overriding train features with %s", train_features_path)
     tables["train_features"] = pd.read_parquet(train_features_path)
 
-
 def compute_match_rate(event_metrics: pd.DataFrame) -> float:
     """Aggregate match rate from event-level metrics."""
     if event_metrics.empty or "match_rate" not in event_metrics.columns:
         return 0.0
     return float(event_metrics["match_rate"].mean())
-
 
 def run_catboost(
     project_root: Path,
@@ -156,7 +146,6 @@ def run_catboost(
     auc_pr = float(invoice_metrics.get("auc_pr", 0.0))
     LOGGER.info("CatBoost AUC-PR: %.4f | Match rate: %.4f", auc_pr, match_rate)
     return ChampionMetrics(auc_pr=auc_pr, match_rate=match_rate)
-
 
 def run_autogluon(
     project_root: Path,
@@ -220,7 +209,6 @@ def run_autogluon(
     LOGGER.info("AutoGluon AUC-PR: %.4f | Match rate: %.4f", auc_pr, match_rate)
     return ChampionMetrics(auc_pr=auc_pr, match_rate=match_rate)
 
-
 def write_champion_manifest(output_dir: Path, model_name: str, metrics: ChampionMetrics) -> Path:
     """Persist the champion.json manifest and return its path."""
     payload = {
@@ -235,7 +223,6 @@ def write_champion_manifest(output_dir: Path, model_name: str, metrics: Champion
     manifest_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False))
     LOGGER.info("Champion manifest written to %s", manifest_path)
     return manifest_path
-
 
 def run(argv: Sequence[str] | None = None) -> None:
     """Entry point for CLI execution."""
@@ -262,10 +249,9 @@ def run(argv: Sequence[str] | None = None) -> None:
 
     write_champion_manifest(output_dir, args.model, metrics)
 
-
-def main() -> None:  # pragma: no cover - CLI entry point
+def main() -> None:
     run()
-
 
 if __name__ == "__main__":
     main()
+

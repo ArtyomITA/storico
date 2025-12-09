@@ -13,12 +13,10 @@ LOGGER = logging.getLogger(__name__)
 
 MAX_NEGATIVES_PER_EVENT = 20
 
-
 def configure_logging(level: int | str | None = logging.INFO) -> Path:
     """Ensure standard pipeline logging handlers are configured."""
 
     return setup_logging(level)
-
 
 def load_curated_inputs(project_root: Path) -> Dict[str, pd.DataFrame]:
     """Load curated datasets required for label generation."""
@@ -35,13 +33,11 @@ def load_curated_inputs(project_root: Path) -> Dict[str, pd.DataFrame]:
         dataframes[name] = pd.read_parquet(path)
     return dataframes
 
-
 def prepare_event_items(event_items: pd.DataFrame) -> pd.DataFrame:
     """Prepare event items with original event key preserved."""
     items = event_items.copy()
     items["source_event_key"] = items["event_key"].astype("string")
     return items.drop(columns=["event_key"])
-
 
 def append_labels_for_event(
     event_row: pd.Series,
@@ -96,7 +92,6 @@ def append_labels_for_event(
     negatives["label"] = 0
     results.append(negatives)
 
-
 def build_pointwise_labels(project_root: Path) -> pd.DataFrame:
     """Produce the pointwise training dataset with balanced negatives."""
     dataframes = load_curated_inputs(project_root)
@@ -119,7 +114,6 @@ def build_pointwise_labels(project_root: Path) -> pd.DataFrame:
     labelled["label"] = labelled["label"].astype("Int64")
     return labelled
 
-
 def summarise_labels(labelled: pd.DataFrame) -> None:
     """Print acceptance metrics for generated labels."""
     if labelled.empty:
@@ -137,7 +131,6 @@ def summarise_labels(labelled: pd.DataFrame) -> None:
         )
     )
 
-
 def save_labels(labelled: pd.DataFrame, project_root: Path) -> None:
     """Persist pointwise labels dataset to disk."""
     curated_dir = project_root / "data" / "curated"
@@ -145,7 +138,6 @@ def save_labels(labelled: pd.DataFrame, project_root: Path) -> None:
     curated_dir.mkdir(parents=True, exist_ok=True)
     labelled.to_parquet(output_path, compression="snappy", index=False)
     LOGGER.info("Saved %s labelled rows to %s", len(labelled), output_path)
-
 
 def main() -> None:
     """Run label generation end-to-end."""
@@ -160,6 +152,6 @@ def main() -> None:
     save_labels(labelled, project_root)
     summarise_labels(labelled)
 
-
 if __name__ == "__main__":
     main()
+

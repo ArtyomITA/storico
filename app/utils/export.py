@@ -9,14 +9,12 @@ from urllib.parse import urlencode
 import pandas as pd
 import streamlit as st
 
-
 def _find_column(df: pd.DataFrame, candidates: List[str]) -> Optional[str]:
     """Return the first matching column name present in the DataFrame."""
     for name in candidates:
         if name in df.columns:
             return name
     return None
-
 
 def generate_event_explain_json(
     event_row: pd.Series,
@@ -44,8 +42,7 @@ def generate_event_explain_json(
     event_key = event_row.get("event_key")
     doc_id_str = str(doc_id)
     cliente_str = str(cliente)
-    
-    # Model ranking (p_i score)
+
     p_model = event_row.get("p_model", None)
     ranking_modello = {
         "numero_documento": doc_id,
@@ -53,8 +50,7 @@ def generate_event_explain_json(
         "p_model": float(p_model) if pd.notna(p_model) else None,
         "score_binned": int(event_row.get("score_binned", -1)) if pd.notna(event_row.get("score_binned")) else None,
     }
-    
-    # Policy ranking
+
     ranking_policy: Dict[str, Any] = {}
     if policy_scores is not None and not policy_scores.empty:
         doc_col = _find_column(
@@ -125,8 +121,7 @@ def generate_event_explain_json(
                 ranking_policy["predicted_policy"] = str(
                     pred_match.iloc[0].get("predicted_policy", pred_match.iloc[0].get("policy_pred", "n.d."))
                 )
-    
-    # Cluster label and dominant_policy (Prompt 11 extension)
+
     cluster_label = "n.d."
     dominant_policy = "n.d."
     if clusters is not None:
@@ -134,17 +129,13 @@ def generate_event_explain_json(
         if not cluster_match.empty:
             cluster_label = str(cluster_match.iloc[0].get("cluster_display", cluster_match.iloc[0].get("cluster_label", "n.d.")))
             dominant_policy = str(cluster_match.iloc[0].get("dominant_policy", "n.d."))
-    
-    # SHAP top-3
+
     shap_top3 = []
     if shap_values is not None and feature_names is not None:
-        # Assume shap_values is a DataFrame with columns = feature_names, indexed same as event_row
-        # For simplicity, pass shap_row as Series
         try:
             if isinstance(shap_values, pd.Series):
                 shap_row = shap_values
             elif isinstance(shap_values, pd.DataFrame):
-                # Find matching row by doc_id
                 shap_match = shap_values[shap_values.index == event_row.name]
                 if not shap_match.empty:
                     shap_row = shap_match.iloc[0]
@@ -152,13 +143,12 @@ def generate_event_explain_json(
                     shap_row = None
             else:
                 shap_row = None
-            
+
             if shap_row is not None and isinstance(shap_row, pd.Series):
-                # Get top-3 by absolute value
-                shap_abs = shap_row.abs().sort_values(ascending=False)  # type: ignore[call-overload]
+                shap_abs = shap_row.abs().sort_values(ascending=False)
                 top_feats = shap_abs.head(3).index
                 for feat in top_feats:
-                    val_raw = shap_row.loc[feat]  # type: ignore[call-overload]
+                    val_raw = shap_row.loc[feat]
                     val_float = float(val_raw) if not pd.isna(val_raw) else 0.0
                     feat_val_raw = event_row.get(feat, 0.0)
                     feat_val_float = float(feat_val_raw) if not pd.isna(feat_val_raw) else None
@@ -168,8 +158,8 @@ def generate_event_explain_json(
                         "feature_value": feat_val_float,
                     })
         except Exception:
-            pass  # Graceful fallback if SHAP not available
-    
+            pass
+
     return {
         "ranking_modello": ranking_modello,
         "ranking_policy": ranking_policy,
@@ -177,7 +167,6 @@ def generate_event_explain_json(
         "dominant_policy": dominant_policy,
         "shap_top3": shap_top3,
     }
-
 
 def export_dataframe_to_csv(df: pd.DataFrame, filename: str = "export.csv") -> bytes:
     """Export DataFrame to CSV bytes for st.download_button.
@@ -190,7 +179,6 @@ def export_dataframe_to_csv(df: pd.DataFrame, filename: str = "export.csv") -> b
         CSV bytes.
     """
     return df.to_csv(index=False).encode("utf-8")
-
 
 def generate_deeplink(
     page: str,
@@ -205,7 +193,6 @@ def generate_deeplink(
     Returns:
         URL string with query parameters.
     """
-    # Encode filters as query string
     query_params = {"page": page}
     for key, value in filters.items():
         if value is not None:
@@ -213,11 +200,9 @@ def generate_deeplink(
                 query_params[key] = ",".join(str(v) for v in value)
             else:
                 query_params[key] = str(value)
-    
-    # Build URL (Streamlit uses query params API)
+
     query_string = urlencode(query_params)
     return f"?{query_string}"
-
 
 def restore_filters_from_deeplink() -> Dict[str, Any]:
     """Restore filter state from URL query parameters.
@@ -231,7 +216,6 @@ def restore_filters_from_deeplink() -> Dict[str, Any]:
         for key, value in query_params.items():
             if key == "page":
                 continue
-            # Try to parse comma-separated lists
             if "," in value:
                 filters[key] = value.split(",")
             else:
@@ -240,7 +224,6 @@ def restore_filters_from_deeplink() -> Dict[str, Any]:
     except Exception:
         return {}
 
-
 def copy_to_clipboard_button(text: str, label: str = "📋 Copy Deep-Link") -> None:
     """Display button that copies text to clipboard.
     
@@ -248,8 +231,6 @@ def copy_to_clipboard_button(text: str, label: str = "📋 Copy Deep-Link") -> N
         text: Text to copy.
         label: Button label.
     """
-    # Streamlit doesn't have native clipboard API, use JavaScript workaround
-    # Generate a button that triggers JS copy
     st.markdown(
         f"""
         <button onclick="navigator.clipboard.writeText('{text}')">
@@ -259,7 +240,6 @@ def copy_to_clipboard_button(text: str, label: str = "📋 Copy Deep-Link") -> N
         unsafe_allow_html=True,
     )
     st.caption("(Click button to copy URL to clipboard)")
-
 
 def save_export_to_disk(
     content: bytes,
@@ -282,14 +262,13 @@ def save_export_to_disk(
         export_dir = data_dir.parent / "data_mock" / "exports"
     else:
         export_dir = data_dir / "exports"
-    
+
     export_dir.mkdir(parents=True, exist_ok=True)
-    
+
     output_path = export_dir / filename
     output_path.write_bytes(content)
-    
-    return output_path
 
+    return output_path
 
 def generate_export_filename(prefix: str, extension: str = "csv") -> str:
     """Generate timestamped export filename.
@@ -304,3 +283,4 @@ def generate_export_filename(prefix: str, extension: str = "csv") -> str:
     from datetime import datetime
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     return f"{prefix}_{timestamp}.{extension}"
+

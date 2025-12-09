@@ -10,12 +10,10 @@ from src.utils.logging_setup import configure_logging as setup_logging
 
 LOGGER = logging.getLogger(__name__)
 
-
 def configure_logging(level: int | str | None = logging.INFO) -> Path:
     """Configure shared logging handlers for the module."""
 
     return setup_logging(level)
-
 
 def load_line_items(project_root: Path) -> pd.DataFrame:
     """Load curated line items."""
@@ -24,7 +22,6 @@ def load_line_items(project_root: Path) -> pd.DataFrame:
         raise FileNotFoundError(f"Missing curated line items at {path}")
     LOGGER.info("Loading line items from %s", path)
     return pd.read_parquet(path)
-
 
 def build_event_key_column(line_items: pd.DataFrame) -> pd.Series:
     """Construct the event_key string for rows with a clearing date."""
@@ -39,11 +36,10 @@ def build_event_key_column(line_items: pd.DataFrame) -> pd.Series:
     )
     return key
 
-
 def compute_events(event_items: pd.DataFrame) -> pd.DataFrame:
     """Aggregate event-level metrics."""
     grouped = (
-        event_items.dropna(subset=["event_key"])  # keep only rows linked to an event
+        event_items.dropna(subset=["event_key"])
         .groupby(["cliente", "data_pareggio", "doc_pareggio", "event_key"], dropna=False)
         .agg(
             importo_evento=("imp_div_int", "sum"),
@@ -60,13 +56,11 @@ def compute_events(event_items: pd.DataFrame) -> pd.DataFrame:
 
     return grouped
 
-
 def save_parquet(df: pd.DataFrame, path: Path) -> None:
     """Persist dataframe to Parquet with snappy compression."""
     path.parent.mkdir(parents=True, exist_ok=True)
     df.to_parquet(path, compression="snappy", index=False)
     LOGGER.info("Saved %s rows to %s", len(df), path)
-
 
 def print_event_examples(events: pd.DataFrame, limit: int = 3) -> None:
     """Print sample events to satisfy acceptance criteria."""
@@ -76,7 +70,6 @@ def print_event_examples(events: pd.DataFrame, limit: int = 3) -> None:
     else:
         print("Sample events:")
         print(sample.to_string(index=False))
-
 
 def build_events_tables(project_root: Path) -> None:
     """Execute pipeline to materialise event tables."""
@@ -92,13 +85,12 @@ def build_events_tables(project_root: Path) -> None:
 
     print_event_examples(events)
 
-
 def main() -> None:
     """Entry point when executing as a module."""
     configure_logging()
     project_root = Path(__file__).resolve().parents[2]
     build_events_tables(project_root)
 
-
 if __name__ == "__main__":
     main()
+

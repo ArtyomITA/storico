@@ -26,7 +26,6 @@ CARDINALITY_BUCKETS = {
     "k>=4": (4, float("inf")),
 }
 
-
 @dataclass
 class EventRankingMetrics:
     """Container for per-event ranking KPIs."""
@@ -35,15 +34,13 @@ class EventRankingMetrics:
     cliente: str
     cardinality: int
     precision_at_k: Dict[int, float]
-    hit_rate_at_k: Dict[int, float]  # alias for recall@k
+    hit_rate_at_k: Dict[int, float]
     mrr: float
     ndcg_at_k: Dict[int, float]
-
 
 def configure_logging(level: int | str | None = logging.INFO) -> Path:
     """Configure shared logging handlers for CLI execution."""
     return setup_logging(level)
-
 
 def load_test_data(project_root: Path) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """Load test split features and events for evaluation."""
@@ -59,7 +56,6 @@ def load_test_data(project_root: Path) -> Tuple[pd.DataFrame, pd.DataFrame]:
     features = pd.read_parquet(features_path)
     events = pd.read_parquet(events_path)
 
-    # Perform temporal split to isolate test set (70/30 split)
     event_dates = events[["event_key", "data_pareggio"]].dropna().copy()
     event_dates["data_pareggio"] = pd.to_datetime(event_dates["data_pareggio"], errors="coerce")
     event_dates = event_dates.dropna(subset=["data_pareggio"])
@@ -78,11 +74,8 @@ def load_test_data(project_root: Path) -> Tuple[pd.DataFrame, pd.DataFrame]:
     LOGGER.info("Loaded %d test samples from %d total features", len(test_df), len(features))
     return test_df, events
 
-
 def load_model_predictions(test_df: pd.DataFrame, project_root: Path) -> pd.DataFrame:
     """Load or generate calibrated model predictions for test set."""
-    # For now, use a simple heuristic based on existing features
-    # In production, this would load actual model predictions from artifacts
     models_dir = project_root / "models"
     catboost_path = models_dir / "catboost.cbm"
 
@@ -93,7 +86,6 @@ def load_model_predictions(test_df: pd.DataFrame, project_root: Path) -> pd.Data
             model = CatBoostClassifier()
             model.load_model(str(catboost_path))
 
-            # Select features matching training schema
             drop_cols = ["label", "data_pareggio", "cliente", "event_key", "numero_documento"]
             feature_df = test_df.drop(columns=[col for col in drop_cols if col in test_df.columns])
 
@@ -107,7 +99,6 @@ def load_model_predictions(test_df: pd.DataFrame, project_root: Path) -> pd.Data
             pool = Pool(data=feature_df, cat_features=cat_indices if cat_indices else None)
             probs = model.predict_proba(pool)[:, 1]
 
-            # Apply calibrator if available
             calibrator_path = models_dir / "calibrator.pkl"
             if calibrator_path.exists():
                 import pickle
@@ -127,7 +118,6 @@ def load_model_predictions(test_df: pd.DataFrame, project_root: Path) -> pd.Data
         except Exception as exc:
             LOGGER.warning("Failed to load CatBoost model: %s; falling back to heuristic", exc)
 
-    # Fallback: use simple heuristic based on age_days if available
     result = test_df[["cliente", "event_key", "numero_documento", "label"]].copy()
     if "age_days" in test_df.columns:
         result["prob"] = test_df["age_days"].fillna(0).clip(0, 365) / 365.0
@@ -136,14 +126,12 @@ def load_model_predictions(test_df: pd.DataFrame, project_root: Path) -> pd.Data
     LOGGER.info("Using fallback heuristic predictions for %d test samples", len(result))
     return result
 
-
 def compute_precision_at_k(ranked_labels: np.ndarray, k: int) -> float:
     """Compute precision@k: fraction of top-k items that are relevant."""
     if k <= 0 or len(ranked_labels) == 0:
         return 0.0
     top_k = ranked_labels[:k]
     return float(np.sum(top_k)) / k
-
 
 def compute_hit_rate_at_k(ranked_labels: np.ndarray, k: int, n_relevant: int) -> float:
     """Compute hit rate (recall)@k: fraction of relevant items found in top-k."""
@@ -152,7 +140,6 @@ def compute_hit_rate_at_k(ranked_labels: np.ndarray, k: int, n_relevant: int) ->
     top_k = ranked_labels[:k]
     return float(np.sum(top_k)) / n_relevant
 
-
 def compute_mrr(ranked_labels: np.ndarray) -> float:
     """Compute Mean Reciprocal Rank: 1 / rank of first relevant item."""
     if len(ranked_labels) == 0:
@@ -160,25 +147,22 @@ def compute_mrr(ranked_labels: np.ndarray) -> float:
     relevant_indices = np.where(ranked_labels == 1)[0]
     if len(relevant_indices) == 0:
         return 0.0
-    first_relevant_rank = relevant_indices[0] + 1  # 1-indexed
+    first_relevant_rank = relevant_indices[0] + 1
     return 1.0 / first_relevant_rank
-
 
 def compute_ndcg_at_k(ranked_labels: np.ndarray, k: int) -> float:
     """Compute Normalized Discounted Cumulative Gain@k."""
     if k <= 0 or len(ranked_labels) == 0:
         return 0.0
 
-    # DCG: sum of rel_i / log2(i+1) for i in 1..k
     top_k = ranked_labels[:k]
     if len(top_k) == 0:
         return 0.0
 
     dcg = 0.0
     for i, rel in enumerate(top_k):
-        dcg += float(rel) / np.log2(i + 2)  # i+2 because rank is 1-indexed
+        dcg += float(rel) / np.log2(i + 2)
 
-    # IDCG: best possible DCG with perfect ranking
     n_relevant = int(np.sum(ranked_labels))
     ideal_labels = np.sort(ranked_labels)[::-1][:k]
     idcg = 0.0
@@ -189,13 +173,11 @@ def compute_ndcg_at_k(ranked_labels: np.ndarray, k: int) -> float:
         return 0.0
     return dcg / idcg
 
-
 def evaluate_event_ranking(event_group: pd.DataFrame, k_values: List[int]) -> EventRankingMetrics:
     """Compute ranking KPIs for a single clearing event."""
     event_key = str(event_group.iloc[0]["event_key"])
     cliente = str(event_group.iloc[0]["cliente"])
 
-    # Rank candidates by descending probability
     sorted_group = event_group.sort_values("prob", ascending=False).reset_index(drop=True)
     ranked_labels = sorted_group["label"].to_numpy(dtype=int)
     n_relevant = int(np.sum(ranked_labels))
@@ -221,14 +203,12 @@ def evaluate_event_ranking(event_group: pd.DataFrame, k_values: List[int]) -> Ev
         ndcg_at_k=ndcg_at_k,
     )
 
-
 def compute_coverage_at_k(event_metrics: List[EventRankingMetrics], k: int) -> float:
     """Compute coverage@k: fraction of events with at least one hit in top-k."""
     if not event_metrics:
         return 0.0
     events_with_hit = sum(1 for m in event_metrics if m.hit_rate_at_k.get(k, 0) > 0)
     return events_with_hit / len(event_metrics)
-
 
 def aggregate_kpis(
     event_metrics: List[EventRankingMetrics], aggregation_key: str, aggregation_value: str
@@ -248,7 +228,6 @@ def aggregate_kpis(
         "n_events": n_events,
     }
 
-    # Average precision, hit_rate, nDCG per k
     for k in K_VALUES:
         precisions = [m.precision_at_k.get(k, 0.0) for m in event_metrics]
         hit_rates = [m.hit_rate_at_k.get(k, 0.0) for m in event_metrics]
@@ -259,21 +238,17 @@ def aggregate_kpis(
         result[f"ndcg@{k}"] = float(np.mean(ndcgs)) if ndcgs else 0.0
         result[f"coverage@{k}"] = compute_coverage_at_k(event_metrics, k)
 
-    # MRR
     mrrs = [m.mrr for m in event_metrics]
     result["mrr"] = float(np.mean(mrrs)) if mrrs else 0.0
 
     return result
 
-
 def build_kpi_table(event_metrics: List[EventRankingMetrics]) -> pd.DataFrame:
     """Build comprehensive KPI table with per-client, global, and cardinality-bucket aggregations."""
     rows: List[Dict[str, object]] = []
 
-    # Global aggregation
     rows.append(aggregate_kpis(event_metrics, "global", "all"))
 
-    # Per-client aggregation
     client_groups: Dict[str, List[EventRankingMetrics]] = {}
     for metric in event_metrics:
         client_groups.setdefault(metric.cliente, []).append(metric)
@@ -281,7 +256,6 @@ def build_kpi_table(event_metrics: List[EventRankingMetrics]) -> pd.DataFrame:
     for cliente, client_metrics in client_groups.items():
         rows.append(aggregate_kpis(client_metrics, "cliente", cliente))
 
-    # Per-cardinality bucket aggregation
     for bucket_name, (min_k, max_k) in CARDINALITY_BUCKETS.items():
         bucket_metrics = [m for m in event_metrics if min_k <= m.cardinality <= max_k]
         if bucket_metrics:
@@ -289,10 +263,8 @@ def build_kpi_table(event_metrics: List[EventRankingMetrics]) -> pd.DataFrame:
 
     return pd.DataFrame(rows)
 
-
 def print_summary_table(kpi_df: pd.DataFrame) -> None:
     """Print console summary table with key KPIs."""
-    # Global row
     global_row = kpi_df[kpi_df["aggregation_key"] == "global"]
     if not global_row.empty:
         LOGGER.info("=== Global Ranking KPIs ===")
@@ -307,7 +279,6 @@ def print_summary_table(kpi_df: pd.DataFrame) -> None:
             )
         LOGGER.info("MRR: %.3f", global_row.iloc[0].get("mrr", 0.0))
 
-    # Cardinality buckets
     bucket_rows = kpi_df[kpi_df["aggregation_key"] == "cardinality_bucket"]
     if not bucket_rows.empty:
         LOGGER.info("=== Cardinality Bucket KPIs ===")
@@ -323,7 +294,6 @@ def print_summary_table(kpi_df: pd.DataFrame) -> None:
                 row.get("mrr", 0.0),
             )
 
-    # Top clients by hit_rate@3
     client_rows = kpi_df[kpi_df["aggregation_key"] == "cliente"].copy()
     if not client_rows.empty:
         client_rows = client_rows.sort_values("hit_rate@3", ascending=False).head(5)
@@ -336,7 +306,6 @@ def print_summary_table(kpi_df: pd.DataFrame) -> None:
                 row.get("hit_rate@3", 0.0),
                 row.get("mrr", 0.0),
             )
-
 
 def save_kpi_table(kpi_df: pd.DataFrame, project_root: Path) -> Tuple[Path, Path]:
     """Save KPI table to both Parquet and CSV formats."""
@@ -352,7 +321,6 @@ def save_kpi_table(kpi_df: pd.DataFrame, project_root: Path) -> Tuple[Path, Path
     LOGGER.info("Saved ranking KPIs to %s and %s", parquet_path, csv_path)
     return parquet_path, csv_path
 
-
 def main() -> None:
     """Main entry point for KPI ranking computation."""
     configure_logging()
@@ -366,7 +334,7 @@ def main() -> None:
     event_metrics: List[EventRankingMetrics] = []
     for event_key, group in predictions.groupby("event_key"):
         if group["label"].sum() == 0:
-            continue  # Skip events with no positives
+            continue
         metrics = evaluate_event_ranking(group, K_VALUES)
         event_metrics.append(metrics)
 
@@ -380,13 +348,12 @@ def main() -> None:
 
     LOGGER.info("KPI ranking computation complete.")
 
-
 def parse_args() -> argparse.Namespace:
     """Parse command-line arguments."""
     parser = argparse.ArgumentParser(description="Compute extended ranking KPIs for invoice recommendation.")
     parser.add_argument("--k-values", nargs="+", type=int, help="List of k values for ranking metrics.")
     return parser.parse_args()
 
-
-if __name__ == "__main__":  # pragma: no cover
+if __name__ == "__main__":
     main()
+

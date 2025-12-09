@@ -26,12 +26,12 @@ from app.page_components.clusters import render_clusters_page
 from app.page_components.kpi_dashboard import render_kpi_dashboard_page
 from app.page_components.overview_wizard import render_overview_wizard_page
 from app.page_components.pattern_card_v2 import render_pattern_card_v2
-from app.page_components.pattern_summary import render_pattern_summary as render_pattern_summary_page # Renamed to avoid conflict
+from app.page_components.pattern_summary import render_pattern_summary as render_pattern_summary_page
 from app.page_components.pipeline_overview import render_pipeline_overview_page
 from app.page_components.policy_iq import render_policy_iq
 
 from src.analytics.pattern_detectors import POLICY_NAMES, infer_pattern_label
-from src.report.nlg_patterns import render_pattern_summary  # NLG text summary (different from page render)
+from src.report.nlg_patterns import render_pattern_summary
 from src.utils.logging_setup import get_current_log_file, log_timed
 
 st.set_page_config(page_title="Storico Analytics", page_icon="📊", layout="wide")
@@ -40,18 +40,15 @@ LOGGER = logging.getLogger(__name__)
 
 BASE_DIR = Path(__file__).resolve().parents[1]
 
-
 def _data_root() -> Path:
     """Return data root directory: data_mock/ when mock_mode active, else data/."""
     if st.session_state.get("mock_mode"):
         return BASE_DIR / "data_mock"
     return BASE_DIR / Path(os.getenv("APP_DATA_ROOT", "data"))
 
-
 def _p(*parts: str) -> Path:
     """Build a path relative to the active data root."""
     return _data_root().joinpath(*parts)
-
 
 CURATED_DIR = _p("curated")
 MODELS_DIR = BASE_DIR / "models"
@@ -71,13 +68,11 @@ PERIODICITY_COLUMNS = [
     "periodicity_monthly",
 ]
 
-PAGE_OPTIONS = ("Overview & Wizard", "Overview & Pipeline", "Pattern Card", "Pattern Summary", "KPI Dashboard", "Data Explorer", "Clusters", "Policy IQ") # Added Pattern Summary
-
+PAGE_OPTIONS = ("Overview & Wizard", "Overview & Pipeline", "Pattern Card", "Pattern Summary", "KPI Dashboard", "Data Explorer", "Clusters", "Policy IQ")
 
 @st.cache_data(show_spinner=False)
 def _load_parquet(path: Path) -> pd.DataFrame:
     return pd.read_parquet(path)
-
 
 def _section_tracker(metrics: Dict[str, Any], stage_name: str) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
     sections: List[Dict[str, Any]] = metrics.setdefault("sections", [])
@@ -97,14 +92,13 @@ def _section_tracker(metrics: Dict[str, Any], stage_name: str) -> Callable[[Call
 
     return decorator
 
-
 def _record_dataframe(metrics: Dict[str, Any], name: str, df: Optional[pd.DataFrame]) -> None:
     if df is None or not isinstance(df, pd.DataFrame):
         return
     rows, cols = df.shape
     try:
         memory_mb = round(df.memory_usage(deep=True).sum() / (1024 * 1024), 2)
-    except Exception:  # pragma: no cover - defensive
+    except Exception:
         memory_mb = float("nan")
     frames: Dict[str, Dict[str, Any]] = metrics.setdefault("dataframes", {})
     frames[name] = {
@@ -113,7 +107,6 @@ def _record_dataframe(metrics: Dict[str, Any], name: str, df: Optional[pd.DataFr
         "columns": int(cols),
         "memory_mb": memory_mb,
     }
-
 
 def _load_warning_log_records(max_items: int = 3) -> Dict[str, Any]:
     log_path = get_current_log_file()
@@ -129,11 +122,11 @@ def _load_warning_log_records(max_items: int = 3) -> Dict[str, Any]:
             for line in handle:
                 try:
                     payload = json.loads(line)
-                except json.JSONDecodeError:  # pragma: no cover - malformed line
+                except json.JSONDecodeError:
                     continue
                 if payload.get("level") in {"WARNING", "ERROR"}:
                     warnings_errors.append(payload)
-    except FileNotFoundError:  # pragma: no cover - race condition
+    except FileNotFoundError:
         return {"first": [], "last": [], "path": None}
 
     return {
@@ -142,14 +135,13 @@ def _load_warning_log_records(max_items: int = 3) -> Dict[str, Any]:
         "path": str(log_path),
     }
 
-
 def _load_champion_metadata() -> Dict[str, Any]:
     if not CHAMPION_PATH.exists():
         return {}
     try:
         with CHAMPION_PATH.open("r", encoding="utf-8") as handle:
             data = json.load(handle)
-    except json.JSONDecodeError:  # pragma: no cover - malformed json
+    except json.JSONDecodeError:
         return {}
 
     seed_candidates = [
@@ -176,12 +168,11 @@ def _load_champion_metadata() -> Dict[str, Any]:
     }
     return metadata
 
-
 def _load_json_log_tail(log_path: Path, max_lines: int = 100) -> List[Dict[str, Any]]:
     """Load last N lines from JSON log file."""
     if not log_path or not log_path.exists():
         return []
-    
+
     lines: List[Dict[str, Any]] = []
     try:
         with log_path.open("r", encoding="utf-8") as handle:
@@ -193,9 +184,8 @@ def _load_json_log_tail(log_path: Path, max_lines: int = 100) -> List[Dict[str, 
                     continue
     except FileNotFoundError:
         return []
-    
-    return lines[-max_lines:]
 
+    return lines[-max_lines:]
 
 def _render_developer_panel(metrics: Dict[str, Any]) -> None:
     """
@@ -204,7 +194,7 @@ def _render_developer_panel(metrics: Dict[str, Any]) -> None:
     """
     st.markdown("---")
     st.header("🛠️ Developer Mode — Observability Panel")
-    
+
     st.markdown("""
     Enhanced diagnostics for debugging and performance monitoring:
     - **JSON Log Viewer**: Tail of latest run log with filtering
@@ -212,8 +202,7 @@ def _render_developer_panel(metrics: Dict[str, Any]) -> None:
     - **Memory Footprint**: Dataframe sizes and memory usage
     - **Warnings/Errors**: Last 10 warning/error entries parsed from log
     """)
-    
-    # Create tabs for organized display
+
     tabs = st.tabs([
         "⏱️ Timing",
         "💾 Memory",
@@ -221,32 +210,26 @@ def _render_developer_panel(metrics: Dict[str, Any]) -> None:
         "⚠️ Warnings",
         "🏆 Champion"
     ])
-    
-    # ========================================================================
-    # Tab 1: Timing Tracker
-    # ========================================================================
+
     with tabs[0]:
         st.subheader("Section Latencies")
         sections = metrics.get("sections", [])
-        
+
         if sections:
-            # Create DataFrame with timing data
             timing_df = pd.DataFrame(sections).sort_values("duration_ms", ascending=False)
 
             if "name" in timing_df.columns and "stage" not in timing_df.columns:
                 timing_df = timing_df.rename(columns={"name": "stage"})
-            
-            # Add bar visualization
+
             if "duration_ms" in timing_df.columns:
                 max_duration = timing_df["duration_ms"].max()
                 timing_df["progress"] = timing_df["duration_ms"] / max_duration if max_duration > 0 else 0
-            
-            # Display with formatted columns
+
             display_cols = ["stage", "duration_ms"]
             if "duration_ms" in timing_df.columns:
                 timing_df["duration_formatted"] = timing_df["duration_ms"].apply(lambda x: f"{x:.1f} ms")
                 display_cols = ["stage", "duration_formatted", "progress"]
-            
+
             st.dataframe(
                 timing_df[display_cols] if all(c in timing_df.columns for c in display_cols) else timing_df,
                 width="stretch",
@@ -261,8 +244,7 @@ def _render_developer_panel(metrics: Dict[str, Any]) -> None:
                     )
                 }
             )
-            
-            # Summary metrics
+
             col1, col2, col3 = st.columns(3)
             with col1:
                 total_ms = timing_df["duration_ms"].sum()
@@ -275,23 +257,19 @@ def _render_developer_panel(metrics: Dict[str, Any]) -> None:
                 st.metric("Slowest Section", slowest)
         else:
             st.info("No timing data available for this session.")
-    
-    # ========================================================================
-    # Tab 2: Memory Footprint
-    # ========================================================================
+
     with tabs[1]:
         st.subheader("Dataframe Memory Usage")
         df_map: Dict[str, Dict[str, Any]] = metrics.get("dataframes", {})
-        
+
         if df_map:
             memory_df = pd.DataFrame(df_map.values()).sort_values("memory_mb", ascending=False)
-            
-            # Add progress bar for memory
+
             total_memory = 0.0
             if "memory_mb" in memory_df.columns:
                 total_memory = memory_df["memory_mb"].sum()
                 memory_df["pct_of_total"] = memory_df["memory_mb"] / total_memory if total_memory > 0 else 0
-            
+
             st.dataframe(
                 memory_df,
                 width="stretch",
@@ -311,8 +289,7 @@ def _render_developer_panel(metrics: Dict[str, Any]) -> None:
                     )
                 }
             )
-            
-            # Summary metrics
+
             col1, col2, col3 = st.columns(3)
             with col1:
                 st.metric("Total Memory", f"{total_memory:.2f} MB")
@@ -324,27 +301,21 @@ def _render_developer_panel(metrics: Dict[str, Any]) -> None:
                 st.metric("Total Rows", f"{int(total_rows):,}")
         else:
             st.info("No dataframe metrics available.")
-    
-    # ========================================================================
-    # Tab 3: JSON Log Viewer
-    # ========================================================================
+
     with tabs[2]:
         st.subheader("JSON Log Viewer")
-        
-        # Find log file
+
         log_path = get_current_log_file()
         if log_path is None or not log_path.exists():
             candidate_logs = sorted((BASE_DIR / "logs").glob("run_*.jsonl"), reverse=True)
             log_path = candidate_logs[0] if candidate_logs else None
-        
+
         if log_path and log_path.exists():
             st.caption(f"**Log file:** `{log_path}`")
-            
-            # Load tail of log
+
             log_entries = _load_json_log_tail(log_path, max_lines=100)
-            
+
             if log_entries:
-                # Filter controls
                 col1, col2 = st.columns(2)
                 with col1:
                     level_filter = st.multiselect(
@@ -360,46 +331,39 @@ def _render_developer_panel(metrics: Dict[str, Any]) -> None:
                         options=sorted(module_options),
                         key="dev_log_module_filter"
                     )
-                
-                # Apply filters
+
                 filtered_entries = [
                     entry for entry in log_entries
                     if entry.get("level") in level_filter
                     and (not module_filter or entry.get("module") in module_filter)
                 ]
-                
+
                 st.write(f"**Showing {len(filtered_entries)} of {len(log_entries)} entries (last 100 lines)**")
-                
-                # Display entries in expander
-                for i, entry in enumerate(reversed(filtered_entries[-20:])):  # Show last 20 filtered
+
+                for i, entry in enumerate(reversed(filtered_entries[-20:])):
                     level = entry.get("level", "INFO")
                     timestamp = entry.get("timestamp", "")
                     message = entry.get("message", "")
                     module = entry.get("module", "")
-                    
-                    # Color code by level
+
                     level_emoji = {"DEBUG": "🔍", "INFO": "ℹ️", "WARNING": "⚠️", "ERROR": "❌"}.get(level, "📝")
-                    
+
                     with st.expander(f"{level_emoji} [{level}] {timestamp[:19]} — {message[:60]}..."):
                         st.json(entry)
             else:
                 st.info("No log entries found.")
         else:
             st.warning("No log file available.")
-    
-    # ========================================================================
-    # Tab 4: Warnings & Errors
-    # ========================================================================
+
     with tabs[3]:
         st.subheader("Warnings & Errors Parser")
         log_records = metrics.get("logs")
-        
+
         if log_records:
             log_path = log_records.get("path")
             if log_path:
                 st.caption(f"**Log file:** `{log_path}`")
-            
-            # Load last 10 warnings/errors
+
             if log_path:
                 log_path_obj = Path(log_path)
                 if log_path_obj.exists():
@@ -408,11 +372,10 @@ def _render_developer_panel(metrics: Dict[str, Any]) -> None:
                         entry for entry in all_entries
                         if entry.get("level") in {"WARNING", "ERROR"}
                     ][-10:]
-                    
+
                     if warnings_errors:
                         st.write(f"**Last {len(warnings_errors)} warning/error entries:**")
-                        
-                        # Create table
+
                         error_data = []
                         for entry in reversed(warnings_errors):
                             error_data.append({
@@ -421,7 +384,7 @@ def _render_developer_panel(metrics: Dict[str, Any]) -> None:
                                 "Module": entry.get("module", ""),
                                 "Message": entry.get("message", "")[:80]
                             })
-                        
+
                         error_df = pd.DataFrame(error_data)
                         st.dataframe(
                             error_df,
@@ -434,8 +397,7 @@ def _render_developer_panel(metrics: Dict[str, Any]) -> None:
                                 )
                             }
                         )
-                        
-                        # Details in expanders
+
                         st.write("**Full Details:**")
                         for i, entry in enumerate(reversed(warnings_errors)):
                             level_emoji = "⚠️" if entry.get("level") == "WARNING" else "❌"
@@ -449,16 +411,12 @@ def _render_developer_panel(metrics: Dict[str, Any]) -> None:
                 st.info("No log path available.")
         else:
             st.info("No log data available.")
-    
-    # ========================================================================
-    # Tab 5: Champion Model Metadata
-    # ========================================================================
+
     with tabs[4]:
         st.subheader("Champion Model Metadata")
         champion_meta = metrics.get("champion")
-        
+
         if champion_meta:
-            # Display as cards
             col1, col2 = st.columns(2)
             with col1:
                 if "model" in champion_meta:
@@ -471,13 +429,11 @@ def _render_developer_panel(metrics: Dict[str, Any]) -> None:
                 if "split" in champion_meta and champion_meta["split"]:
                     st.write("**Split Config:**")
                     st.json(champion_meta["split"])
-            
-            # Full JSON
+
             with st.expander("View Full Metadata JSON"):
                 st.json(champion_meta)
         else:
             st.info("No champion.json file available or missing seed/split metadata.")
-
 
 @st.cache_data(show_spinner=False)
 def load_curated_tables() -> Tuple[Dict[str, pd.DataFrame], list[str]]:
@@ -521,13 +477,11 @@ def load_curated_tables() -> Tuple[Dict[str, pd.DataFrame], list[str]]:
 
     if "client_pattern_scores" in tables:
         scores = tables["client_pattern_scores"]
-        # Backward compatibility: ensure stability index column is named correctly.
         if "0" in scores.columns and "stability_index" not in scores.columns:
             scores = scores.rename(columns={"0": "stability_index"})
             tables["client_pattern_scores"] = scores
 
     return tables, missing
-
 
 def enrich_features_for_models(
     features: pd.DataFrame,
@@ -581,7 +535,6 @@ def enrich_features_for_models(
 
     return df
 
-
 def select_catboost_features(df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.Series, List[str], List[int]]:
     target = df["label"].astype(int) if "label" in df.columns else pd.Series(dtype=int)
     drop_cols = ["label", "data_pareggio", "cliente", "event_key", "numero_documento"]
@@ -595,13 +548,11 @@ def select_catboost_features(df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.Series,
     cat_indices = [int(idx) for idx in cat_indices_array if idx >= 0]
     return feature_df, target, categorical_cols, cat_indices
 
-
 def select_autogluon_features(df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.Series]:
     target = df["label"].astype(int) if "label" in df.columns else pd.Series(dtype=int)
     drop_cols = ["label", "data_pareggio", "cliente", "event_key", "numero_documento"]
     feature_df = df.drop(columns=[col for col in drop_cols if col in df.columns])
     return feature_df, target
-
 
 @st.cache_data(show_spinner=False)
 def load_feature_repository() -> Tuple[pd.DataFrame, List[str], List[int], List[str]]:
@@ -622,11 +573,10 @@ def load_feature_repository() -> Tuple[pd.DataFrame, List[str], List[int], List[
     auto_matrix, _ = select_autogluon_features(enriched)
     return enriched, list(cat_matrix.columns), cat_indices, list(auto_matrix.columns)
 
-
 @st.cache_resource(show_spinner=False)
 def load_catboost_bundle() -> Tuple[Optional[Any], Optional[Any]]:
     try:
-        from catboost import CatBoostClassifier  # type: ignore
+        from catboost import CatBoostClassifier
     except ImportError:
         LOGGER.warning("CatBoost non disponibile nel runtime Streamlit.")
         return None, None
@@ -643,17 +593,16 @@ def load_catboost_bundle() -> Tuple[Optional[Any], Optional[Any]]:
         try:
             with open(CALIBRATOR_PATH, "rb") as f:
                 calibrator = pickle.load(f)
-        except Exception as exc:  # pragma: no cover - defensive
+        except Exception as exc:
             LOGGER.warning("Impossibile caricare il calibratore: %s", exc)
             calibrator = None
 
     return model, calibrator
 
-
 @st.cache_resource(show_spinner=False)
 def load_autogluon_predictor() -> Optional[Any]:
     try:
-        from autogluon.tabular import TabularPredictor  # type: ignore
+        from autogluon.tabular import TabularPredictor
     except ImportError:
         LOGGER.info("AutoGluon non disponibile nel runtime Streamlit.")
         return None
@@ -664,16 +613,14 @@ def load_autogluon_predictor() -> Optional[Any]:
 
     return TabularPredictor.load(str(AUTOGLUON_DIR))
 
-
 def safe_calibrate(calibrator: Optional[Any], values: np.ndarray) -> np.ndarray:
     if calibrator is None:
         return values
     try:
         return np.asarray(calibrator.predict(values))
-    except Exception:  # pragma: no cover - fallback
+    except Exception:
         LOGGER.warning("Calibratore non applicabile; uso probabilità grezze.")
         return values
-
 
 def recommend_policy_docs(event_df: pd.DataFrame, policy: Optional[str], k: int) -> List[str]:
     if event_df.empty or not policy:
@@ -708,7 +655,6 @@ def recommend_policy_docs(event_df: pd.DataFrame, policy: Optional[str], k: int)
     top = ordered.head(max(k, 1))["numero_documento"].astype(str)
     return top.tolist()
 
-
 def top_docs_from_model(
     event_df: pd.DataFrame,
     feature_columns: Sequence[str],
@@ -728,7 +674,7 @@ def top_docs_from_model(
     autogluon_predictor = load_autogluon_predictor() if model_choice == "autogluon" else None
 
     if model_choice == "catboost" and catboost_model is not None:
-        from catboost import Pool  # type: ignore
+        from catboost import Pool
 
         model_input = event_df[feature_columns]
         pool = Pool(model_input, cat_features=list(cat_indices) if cat_indices else None)
@@ -736,7 +682,7 @@ def top_docs_from_model(
         probs = safe_calibrate(calibrator, probs)
         try:
             shap_values = catboost_model.get_feature_importance(pool, type="ShapValues")
-        except Exception:  # pragma: no cover - shap optional
+        except Exception:
             shap_values = None
         event_df["model_prob"] = probs
         ranked = event_df.sort_values("model_prob", ascending=False)
@@ -763,7 +709,7 @@ def top_docs_from_model(
                 probs = proba_df[1].to_numpy()
             else:
                 probs = proba_df.iloc[:, -1].to_numpy()
-        else:  # pragma: no cover - defensive
+        else:
             probs = np.asarray(proba_df)
         event_df["model_prob"] = probs
         ranked = event_df.sort_values("model_prob", ascending=False)
@@ -772,7 +718,6 @@ def top_docs_from_model(
         return docs, []
 
     return [], []
-
 
 def build_event_comparison_table(
     actual_docs: List[str],
@@ -789,7 +734,6 @@ def build_event_comparison_table(
     }
     return pd.DataFrame(data)
 
-
 def format_percentage(value: Optional[float]) -> str:
     if value is None or (isinstance(value, float) and np.isnan(value)):
         return "n.d."
@@ -797,7 +741,6 @@ def format_percentage(value: Optional[float]) -> str:
         return f"{float(value):.2%}"
     except (TypeError, ValueError):
         return "n.d."
-
 
 def format_decimal(value: Optional[float], digits: int = 2) -> str:
     if value is None or (isinstance(value, float) and np.isnan(value)):
@@ -807,13 +750,11 @@ def format_decimal(value: Optional[float], digits: int = 2) -> str:
     except (TypeError, ValueError):
         return "n.d."
 
-
 def safe_float(value: Any) -> float:
     try:
         return float(value)
-    except (TypeError, ValueError):  # pragma: no cover - defensive
+    except (TypeError, ValueError):
         return float("nan")
-
 
 def compute_acf(values: np.ndarray, max_lag: int = 10) -> Tuple[np.ndarray, np.ndarray]:
     if values.size < 2:
@@ -862,7 +803,6 @@ def plot_histogram_with_markers(values: Iterable[float], title: str) -> go.Figur
     )
     return fig
 
-
 def plot_acf(values: np.ndarray) -> go.Figure:
     lags, coeffs = compute_acf(values)
     fig = go.Figure()
@@ -884,7 +824,6 @@ def plot_acf(values: np.ndarray) -> go.Figure:
         hovermode="closest",
     )
     return fig
-
 
 def plot_periodicity_gauges(scores: pd.Series) -> Tuple[go.Figure, go.Figure, go.Figure]:
     figs: list[go.Figure] = []
@@ -911,7 +850,6 @@ def plot_periodicity_gauges(scores: pd.Series) -> Tuple[go.Figure, go.Figure, go
         fig.update_layout(margin=dict(l=10, r=10, t=40, b=10), height=220)
         figs.append(fig)
     return figs[0], figs[1], figs[2]
-
 
 def plot_calendar_heatmap(events: pd.DataFrame) -> go.Figure:
     if events.empty:
@@ -944,7 +882,6 @@ def plot_calendar_heatmap(events: pd.DataFrame) -> go.Figure:
     heat.update_layout(margin=dict(l=40, r=40, t=40, b=40), hovermode="closest")
     return heat
 
-
 def plot_policy_bars(scores: pd.Series) -> go.Figure:
     policies = [float(scores.get(f"{policy}_score", 0.0)) for policy in POLICY_NAMES]
     fig = go.Figure(
@@ -962,7 +899,6 @@ def plot_policy_bars(scores: pd.Series) -> go.Figure:
         hovermode="closest",
     )
     return fig
-
 
 def plot_cardinality_histogram(events: pd.DataFrame) -> go.Figure:
     if events.empty:
@@ -985,7 +921,6 @@ def plot_cardinality_histogram(events: pd.DataFrame) -> go.Figure:
     )
     return fig
 
-
 def plot_frequency_bar(series: pd.Series, title: str, color: str = "#B6992D") -> go.Figure:
     fig = go.Figure(
         go.Bar(
@@ -1004,7 +939,6 @@ def plot_frequency_bar(series: pd.Series, title: str, color: str = "#B6992D") ->
     )
     return fig
 
-
 def derive_macro_tipo(items: pd.DataFrame) -> pd.Series:
     if "macro_tipo" in items.columns:
         macro = items["macro_tipo"].fillna("Sconosciuto").astype(str)
@@ -1012,7 +946,6 @@ def derive_macro_tipo(items: pd.DataFrame) -> pd.Series:
         macro = items["tipo_documento"].astype(str).str[:1].replace({"": "Sconosciuto", "nan": "Sconosciuto"})
         macro = macro.fillna("Sconosciuto")
     return macro
-
 
 def run_holdout_validation(cliente: str) -> Optional[float]:
     module_candidates = [
@@ -1038,10 +971,9 @@ def run_holdout_validation(cliente: str) -> Optional[float]:
                 try:
                     result = func(cliente)
                 except TypeError:
-                    # Function signature might differ; try passing keyword.
                     try:
                         result = func(cliente=cliente)
-                    except Exception:  # pragma: no cover - defensive
+                    except Exception:
                         continue
                 except Exception:
                     continue
@@ -1053,11 +985,10 @@ def run_holdout_validation(cliente: str) -> Optional[float]:
                 if result is None:
                     return None
                 try:
-                    return float(result)  # type: ignore[arg-type]
+                    return float(result)
                 except (TypeError, ValueError):
                     return None
     return None
-
 
 def render_data_explorer_page(
     tables: Dict[str, pd.DataFrame],
@@ -1160,7 +1091,7 @@ def render_data_explorer_page(
                     elif len(date_input_value) == 1:
                         start_date = date_input_value[0]
                         end_date = date_input_value[0]
-                    else:  # pragma: no cover - defensive
+                    else:
                         start_date = min_date
                         end_date = max_date
                 else:
@@ -1343,7 +1274,6 @@ def render_data_explorer_page(
                     )
 
         _render_analytics()
-
 
 def render_pattern_card(
     selected_client: str,
@@ -1642,18 +1572,10 @@ def render_pattern_card(
 
     _render_validation_section()
 
-
 def main() -> None:
-    # ========================================================================
-    # Prompt 4: Session State Initialization
-    # ========================================================================
-    # Initialize core session state keys if not present
-    # Note: selected_page is controlled by widget (radio button), don't initialize it here
-    # Note: mock_mode is controlled by widget in sidebar, don't initialize it here
     if "pipeline_initialized" not in st.session_state:
         st.session_state["pipeline_initialized"] = False
-    
- # Mock mode badge in header
+
     if st.session_state.get("mock_mode"):
         st.markdown(
             """
@@ -1663,14 +1585,12 @@ def main() -> None:
             """,
             unsafe_allow_html=True,
         )
-    
- # Deep-link restore - parse query params at startup
+
     qp = st.query_params
     if "cliente" in qp and "selected_client" not in st.session_state:
         st.session_state["selected_client"] = qp["cliente"]
-    
+
     with st.sidebar.expander("📤 Dati", expanded=False):
-        # Set default based on data source
         default_mock = st.session_state.get("data_source") == "mock"
         mock_mode = st.checkbox(
             "Usa Mock mode (isola i file)",
@@ -1678,8 +1598,7 @@ def main() -> None:
             key="mock_mode",
             help="Se attivo, i file caricati vengono salvati in data_mock/raw/uploads e gli output in data_mock/curated.",
         )
-        
- # Mock data generator button
+
         if mock_mode:
             st.markdown("---")
             st.markdown("**Dataset Demo**")
@@ -1687,8 +1606,7 @@ def main() -> None:
                 with st.spinner("Generazione dataset sintetico..."):
                     try:
                         import subprocess
-                        
-                        # Run mock data generator
+
                         result = subprocess.run(
                             [sys.executable, "-m", "scripts.make_mock_data"],
                             cwd=str(BASE_DIR),
@@ -1696,33 +1614,32 @@ def main() -> None:
                             text=True,
                             timeout=60,
                         )
-                        
+
                         if result.returncode != 0:
                             st.error(f"Errore generazione mock: {result.stderr}")
                         else:
                             st.success("✓ Dataset sintetico creato")
-                            
-                            # Now run ingest on the mock data
+
                             with st.spinner("Ingest dataset demo..."):
                                 from src.data import ingest_multi
-                                
+
                                 mock_file = _p("raw", "sap_mock.xlsx")
                                 output_path = _p("curated", "line_items.parquet")
                                 docmap_path = _p("curated", "doc_map.parquet")
-                                
+
                                 cli_args = [
                                     "--input", str(mock_file),
                                     "--output", str(output_path),
                                     "--docmap", str(docmap_path),
                                 ]
-                                
+
                                 ingest_multi.run(cli_args)
-                                
+
                                 st.session_state["ingest_notice"] = "Dataset demo caricato: 50 clienti, 12-18 mesi"
                                 st.experimental_rerun()
                     except Exception as exc:
                         st.error(f"Errore: {exc}")
-        
+
         uploaded_files = st.file_uploader(
             "Carica file SAP (.xlsx/.csv)",
             type=["xlsx", "csv"],
@@ -1743,7 +1660,7 @@ def main() -> None:
                 st.info("Nessun file selezionato.")
             else:
                 try:
-                    from src.data import ingest_multi  # local import to avoid eager CLI side-effects
+                    from src.data import ingest_multi
 
                     cli_args: List[str] = []
                     for file_path in saved_paths:
@@ -1757,8 +1674,7 @@ def main() -> None:
 
                     with st.spinner("Esecuzione ingest..."):
                         ingest_multi.run(cli_args)
-                except Exception as exc:  # pragma: no cover - runtime feedback
-                    # Cleanup orphaned files on failure
+                except Exception as exc:
                     for path in saved_paths:
                         if path.exists():
                             path.unlink()
@@ -1772,16 +1688,15 @@ def main() -> None:
     if notice_message:
         st.sidebar.success(notice_message)
 
-    # Operations tab + Quick Guide
     developer_mode = st.sidebar.checkbox("Developer mode", value=False)
-    
+
     if developer_mode:
         with st.sidebar.expander("🔧 Operazioni", expanded=False):
             st.markdown("**Pipeline End-to-End**")
             st.caption("Esegui singoli step della pipeline. I log appaiono nella console.")
-            
+
             col1, col2 = st.columns(2)
-            
+
             with col1:
                 if st.button("🏗️ Build Events", key="op_events"):
                     with st.spinner("Costruzione eventi..."):
@@ -1795,7 +1710,7 @@ def main() -> None:
                             st.success("✓ Events costruiti")
                         except Exception as e:
                             st.error(f"Errore: {e}")
-                
+
                 if st.button("🏷️ Make Labels", key="op_labels"):
                     with st.spinner("Generazione label..."):
                         try:
@@ -1808,7 +1723,7 @@ def main() -> None:
                             st.success("✓ Labels generate")
                         except Exception as e:
                             st.error(f"Errore: {e}")
-                
+
                 if st.button("🧮 Make Features", key="op_features"):
                     with st.spinner("Feature engineering..."):
                         try:
@@ -1823,7 +1738,7 @@ def main() -> None:
                             st.success("✓ Features pronte")
                         except Exception as e:
                             st.error(f"Errore: {e}")
-                
+
                 if st.button("▶️ Train CatBoost", key="op_catboost"):
                     with st.spinner("Training CatBoost..."):
                         try:
@@ -1837,7 +1752,7 @@ def main() -> None:
                             st.success("✓ CatBoost trained")
                         except Exception as e:
                             st.error(f"Errore: {e}")
-            
+
             with col2:
                 if st.button("▶️ Train AutoGluon", key="op_autogluon"):
                     with st.spinner("Training AutoGluon..."):
@@ -1852,7 +1767,7 @@ def main() -> None:
                             st.success("✓ AutoGluon trained")
                         except Exception as e:
                             st.error(f"Errore: {e}")
-                
+
                 if st.button("🧬 Make Embeddings", key="op_embeddings"):
                     with st.spinner("Generazione embeddings..."):
                         try:
@@ -1864,7 +1779,7 @@ def main() -> None:
                             st.success("✓ Embeddings generati")
                         except Exception as e:
                             st.error(f"Errore: {e}")
-                
+
                 if st.button("🔬 Run HDBSCAN", key="op_hdbscan"):
                     with st.spinner("Clustering HDBSCAN..."):
                         try:
@@ -1878,7 +1793,7 @@ def main() -> None:
                             st.success("✓ Cluster calcolati")
                         except Exception as e:
                             st.error(f"Errore: {e}")
-                
+
                 if st.button("📊 Cluster Profile", key="op_cluster_profile"):
                     with st.spinner("Profiling cluster..."):
                         try:
@@ -1891,10 +1806,10 @@ def main() -> None:
                             st.success("✓ Cluster profilati")
                         except Exception as e:
                             st.error(f"Errore: {e}")
-            
+
             st.markdown("---")
             st.caption("**HDBSCAN params**: `min_samples` controlla rumore (default=min_cluster_size); metodo 'eom' sceglie cluster stabili su epsilon. [Docs](https://hdbscan.readthedocs.io)")
-        
+
         with st.sidebar.expander("🧭 Guida rapida", expanded=False):
             st.markdown("""
 **Workflow visibile per l'utente**
@@ -1949,11 +1864,7 @@ def main() -> None:
 - [Medium: AutoGluon Tabular](https://medium.com/tag/autogluon)
 - [HDBSCAN Docs](https://hdbscan.readthedocs.io)
             """)
-    
-    # ========================================
-    # Page selector BEFORE data loading
-    # ========================================
-    # Check query params for page navigation
+
     qp = st.query_params
     default_page_index = 0
     if "page" in qp:
@@ -1961,30 +1872,23 @@ def main() -> None:
             default_page_index = PAGE_OPTIONS.index(qp["page"])
         except (ValueError, KeyError):
             default_page_index = 0
-    
+
     page = st.sidebar.radio("Pagina", PAGE_OPTIONS, index=default_page_index, key="selected_page")
-    
-    # ========================================
-    # Pages that DON'T require events.parquet
-    # ========================================
+
     if page == "Overview & Wizard":
         render_overview_wizard_page()
         return
-    
+
     if page == "Overview & Pipeline":
         render_pipeline_overview_page()
         return
-    
-    # ========================================
-    # Load data for all other pages
-    # ========================================
+
     tables, missing = load_curated_tables()
     if missing:
         st.sidebar.warning("File mancanti: " + ", ".join(missing))
 
     events = tables.get("events", pd.DataFrame())
     if events.empty:
-        # No data: guide user to Overview & Wizard
         st.error("❌ Il file events.parquet è necessario per utilizzare questa pagina.")
         st.info(
             "💡 **Come iniziare:**\n\n"
@@ -2005,16 +1909,13 @@ def main() -> None:
 
     feature_repository, cat_feature_cols, cat_cat_indices, auto_feature_cols = load_feature_repository()
 
-    # Build clients list (handle empty events case in mock mode)
     if not events.empty:
         clients = sorted(events["cliente"].dropna().astype(str).unique())
     else:
         clients = []
-    
-    # Initialize developer metrics early (needed for all pages)
+
     developer_metrics: Dict[str, Any] = {"sections": [], "dataframes": {}}
-    
-    # If no clients, show error and guide user
+
     if not clients:
         st.error("❌ Nessun cliente disponibile negli eventi.")
         st.info(
@@ -2024,43 +1925,34 @@ def main() -> None:
         )
         st.stop()
 
-    # ========================================================================
-    # Prompt 4: Drill-Down Router with Source Page Tracking
-    # ========================================================================
     drill_active = False
     drill_source_page = None
-    
+
     if "drill_cliente" in st.session_state and "active_page" in st.session_state:
         drill_cliente = st.session_state["drill_cliente"]
         target_page = st.session_state["active_page"]
-        drill_source_page = st.session_state.get("drill_source_page", "Pattern Summary")  # Default for backward compat
-        
-        # Validate drill cliente exists in current dataset
+        drill_source_page = st.session_state.get("drill_source_page", "Pattern Summary")
+
         if drill_cliente in clients:
-            # Set selected_client and page for drill-down
             st.session_state["selected_client"] = drill_cliente
-            
-            # Force page to target
+
             page = target_page
             drill_active = True
-            
-            # Show drill-down indicator in sidebar
+
             source_icon = "🔬" if drill_source_page == "Clusters" else "📊"
             st.sidebar.info(f"🔗 **Drill-down attivo**\n\nCliente: **{drill_cliente}**\n\nDa: {source_icon} {drill_source_page}")
         else:
-            # Invalid drill cliente, clear state
             st.warning(f"⚠️ Cliente drill-down '{drill_cliente}' non trovato nel dataset corrente.")
             del st.session_state["drill_cliente"]
             del st.session_state["active_page"]
             if "drill_source_page" in st.session_state:
                 del st.session_state["drill_source_page"]
-    
-    # Pattern Summary page (drill-down to Pattern Card)
+
     if page == "Pattern Summary":
         @_section_tracker(developer_metrics, "UI.PatternSummary")
         def _render_pattern_summary_wrapper() -> None:
             render_pattern_summary_page(data_dir=_data_root())
-        
+
         _render_pattern_summary_wrapper()
         if developer_mode:
             developer_metrics["logs"] = _load_warning_log_records()
@@ -2074,15 +1966,13 @@ def main() -> None:
     st.sidebar.header("Selezione")
     selected_client_value = st.sidebar.selectbox("Cliente", clients, key="selected_client")
     selected_client = str(selected_client_value)
-    
- # Toggle to hide regmonth policy
+
     hide_regmonth = st.sidebar.checkbox(
         "Nascondi policy 'regmonth'",
         value=True,
         key="hide_regmonth",
         help="Regmonth = 'stesso mese di registrazione', non 'pagato tutto il mese'. Attiva per escludere da grafici/metriche."
     )
-
 
     if page == "KPI Dashboard":
         @_section_tracker(developer_metrics, "UI.KPI_Dashboard")
@@ -2141,34 +2031,27 @@ def main() -> None:
             _render_developer_panel(developer_metrics)
         return
 
-    # ========================================================================
-    # Prompt 4: Breadcrumb Navigation for Drill-Down Mode
-    # ========================================================================
     if drill_active and drill_source_page:
-        # Show breadcrumb to return to source page
         st.markdown("---")
         breadcrumb_col1, breadcrumb_col2 = st.columns([0.3, 0.7])
-        
+
         with breadcrumb_col1:
             if st.button(f"← Torna a {drill_source_page}", key="drill_back_button", type="secondary"):
-                # Clear drill-down state
                 if "drill_cliente" in st.session_state:
                     del st.session_state["drill_cliente"]
                 if "active_page" in st.session_state:
                     del st.session_state["active_page"]
                 if "drill_source_page" in st.session_state:
                     del st.session_state["drill_source_page"]
-                
-                # Navigate back to source page
+
                 st.session_state["selected_page"] = drill_source_page
                 st.rerun()
-        
+
         with breadcrumb_col2:
             st.caption(f"📍 Navigazione: {drill_source_page} → Pattern Card (Cliente: {selected_client})")
-        
+
         st.markdown("---")
 
-    # Use Pattern Card v2 (refactored 2-column layout + explainability)
     @_section_tracker(developer_metrics, "UI.PatternCard_v2")
     def _render_pattern_card_v2() -> None:
         render_pattern_card_v2(
@@ -2183,14 +2066,10 @@ def main() -> None:
             developer_metrics=developer_metrics,
             hide_regmonth=hide_regmonth,
         )
-    
+
     _render_pattern_card_v2()
 
-    # Prompt 4: Clear drill-down state after Pattern Card renders
-    # (State needed during render, but should be cleared after to prevent persistence)
     if drill_active:
-        # Keep state for this render, but mark for cleanup on next interaction
-        # User can navigate back via breadcrumb or sidebar
         pass
 
     if developer_mode:
@@ -2198,6 +2077,6 @@ def main() -> None:
         developer_metrics["champion"] = _load_champion_metadata()
         _render_developer_panel(developer_metrics)
 
-
-if __name__ == "__main__":  # pragma: no cover
+if __name__ == "__main__":
     main()
+

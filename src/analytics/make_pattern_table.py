@@ -14,7 +14,6 @@ import pandas as pd
 
 from src.utils.logging_setup import configure_logging as setup_logging
 
-
 LOGGER = logging.getLogger(__name__)
 
 DATA_DIR = Path("data/curated")
@@ -51,10 +50,8 @@ FINAL_COLUMNS = [
     "stability_index",
 ]
 
-
 def _configure_logging(level: int | str | None = logging.INFO) -> Path:
     return setup_logging(level)
-
 
 def load_parquet(path: Path) -> pd.DataFrame:
     """Load a parquet file with logging.
@@ -72,7 +69,6 @@ def load_parquet(path: Path) -> pd.DataFrame:
     LOGGER.info("Loading data from %s", path)
     return pd.read_parquet(path)
 
-
 def derive_pattern_attributes(pattern_scores: pd.DataFrame) -> pd.DataFrame:
     """Augment pattern scores with label, confidence, and stability index.
 
@@ -87,7 +83,6 @@ def derive_pattern_attributes(pattern_scores: pd.DataFrame) -> pd.DataFrame:
     if missing:
         raise ValueError(f"Pattern scores missing required columns: {sorted(missing)}")
 
-    # Remove unnamed or placeholder columns if present.
     unnamed_cols = [col for col in df.columns if col.startswith("Unnamed") or col == "0"]
     if unnamed_cols:
         LOGGER.warning("Dropping auxiliary columns from pattern scores: %s", unnamed_cols)
@@ -115,12 +110,10 @@ def derive_pattern_attributes(pattern_scores: pd.DataFrame) -> pd.DataFrame:
 
     return df
 
-
 def _safe_rename_match_rate(df: pd.DataFrame, column: str, new_name: str) -> pd.DataFrame:
     if column not in df.columns:
         raise ValueError(f"Expected column '{column}' not found in dataframe: {list(df.columns)}")
     return df.rename(columns={column: new_name})
-
 
 def build_pattern_table(
     pattern_scores: pd.DataFrame,
@@ -153,13 +146,11 @@ def build_pattern_table(
     else:
         merged["model_match_rate_auto"] = pd.NA
 
-    # Ensure all requested columns exist.
     for column in FINAL_COLUMNS:
         if column not in merged.columns:
             merged[column] = pd.NA
 
     return merged[FINAL_COLUMNS].sort_values("cliente").reset_index(drop=True)
-
 
 def filter_top_clients(pattern_table: pd.DataFrame, n: int = 5) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """Identify top-N clear and noisy clients.
@@ -194,7 +185,6 @@ def filter_top_clients(pattern_table: pd.DataFrame, n: int = 5) -> Tuple[pd.Data
 
     return clear_clients.reset_index(drop=True), noisy_clients.reset_index(drop=True)
 
-
 def main() -> None:
     _configure_logging()
 
@@ -223,6 +213,6 @@ def main() -> None:
     LOGGER.info("Top clear clients (confidence high, entropy low):\n%s", clear_clients.to_string(index=False))
     LOGGER.info("Top noisy clients (confidence low, entropy high):\n%s", noisy_clients.to_string(index=False))
 
-
 if __name__ == "__main__":
     main()
+

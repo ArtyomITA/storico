@@ -45,12 +45,10 @@ EVENT_AMOUNT_FEATURES = [
 ]
 FEATURES_TO_LOG = NEW_CALENDAR_FEATURES + EVENT_AMOUNT_FEATURES
 
-
 def configure_logging(level: int | str | None = logging.INFO) -> Path:
     """Set up shared logging handlers for feature engineering."""
 
     return setup_logging(level)
-
 
 def load_curated_datasets(project_root: Path) -> Dict[str, pd.DataFrame]:
     """Load curated artifacts required for feature engineering.
@@ -62,14 +60,13 @@ def load_curated_datasets(project_root: Path) -> Dict[str, pd.DataFrame]:
         "train_pointwise": curated_dir / "train_pointwise.parquet",
         "events": curated_dir / "events.parquet",
         "event_items": curated_dir / "event_items.parquet",
-        "line_items": curated_dir / "line_items.parquet",  # Added for month_coverage
+        "line_items": curated_dir / "line_items.parquet",
     }
 
     dataframes: Dict[str, pd.DataFrame] = {}
     for name, path in paths.items():
         if not path.exists():
             if name == "line_items":
-                # Optional: month_coverage will be skipped if not available
                 LOGGER.warning("Optional file %s not found; month_coverage will be zeros", path)
                 dataframes[name] = pd.DataFrame()
             else:
@@ -79,11 +76,9 @@ def load_curated_datasets(project_root: Path) -> Dict[str, pd.DataFrame]:
             dataframes[name] = pd.read_parquet(path)
     return dataframes
 
-
 def _safe_numeric(series: pd.Series) -> pd.Series:
     """Convert a series to numeric, preserving NA for invalid entries."""
     return pd.to_numeric(series, errors="coerce")
-
 
 def _cyclical_encoding(values: pd.Series, period: int) -> pd.DataFrame:
     """Return sine and cosine encodings for ordinal values with given period."""
@@ -92,7 +87,6 @@ def _cyclical_encoding(values: pd.Series, period: int) -> pd.DataFrame:
         "sin": np.sin(radians),
         "cos": np.cos(radians),
     })
-
 
 def _gini_coefficient(values: Sequence[float]) -> float:
     """Compute the Gini coefficient for a sequence of values."""
@@ -111,7 +105,6 @@ def _gini_coefficient(values: Sequence[float]) -> float:
     n = sorted_vals.size
     gini = (n + 1 - 2 * np.sum(cumulative) / total) / n
     return float(max(0.0, gini))
-
 
 def _compute_client_cadence_windows(events: pd.DataFrame, window_days: int) -> pd.DataFrame:
     """Compute rolling cadence ratios per client for weekly and EOM patterns."""
@@ -169,7 +162,6 @@ def _compute_client_cadence_windows(events: pd.DataFrame, window_days: int) -> p
 
     return enriched
 
-
 def enrich_events_with_calendar_features(
     events: pd.DataFrame,
     eom_threshold_days: int = EOM_THRESHOLD_DAYS,
@@ -216,7 +208,6 @@ def enrich_events_with_calendar_features(
 
     enriched = _compute_client_cadence_windows(enriched, window_days)
     return enriched
-
 
 def _compute_sequence_features(group: pd.DataFrame) -> pd.DataFrame:
     """Compute document sequence metrics within a client-month group."""
@@ -310,9 +301,8 @@ def _compute_sequence_features(group: pd.DataFrame) -> pd.DataFrame:
 
     return result.reindex(original_index)
 
-
 def compute_client_profiles(
-    events: pd.DataFrame, 
+    events: pd.DataFrame,
     event_items: pd.DataFrame,
     line_items: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
@@ -380,7 +370,6 @@ def compute_client_profiles(
     profiles["dow_sin_mean_hist"] = items.groupby("cliente")["dow_sin_hist"].mean()
     profiles["dow_cos_mean_hist"] = items.groupby("cliente")["dow_cos_hist"].mean()
 
-    # Event-level statistics
     if not events.empty:
         events = events.copy()
         events["dow"] = events["data_pareggio"].dt.weekday
@@ -409,8 +398,6 @@ def compute_client_profiles(
         profiles["dow_sin_event_mean"] = 0.0
         profiles["dow_cos_event_mean"] = 0.0
 
-    # ACF (Autocorrelation Function) for periodicity - Prompt 3 requirement
-    # Compute ACF on inter-event gaps for each client
     if not events.empty and "inter_event_gap_days" in events.columns:
         acf_profiles = _compute_acf_features(events)
         profiles = profiles.join(acf_profiles, how="left")
@@ -419,13 +406,11 @@ def compute_client_profiles(
         profiles["acf_lag7"] = 0.0
         profiles["acf_lag14"] = 0.0
         profiles["acf_lag30"] = 0.0
-    
-    # Month coverage metrics - Prompt 3 requirement
-    # Integrate month_coverage_* if line_items available
+
     if line_items is not None and not line_items.empty:
         try:
             from src.analytics.month_coverage import compute_month_coverage_metrics
-            
+
             coverage_df = compute_month_coverage_metrics(events, event_items, line_items)
             if not coverage_df.empty:
                 profiles = profiles.merge(
@@ -447,7 +432,6 @@ def compute_client_profiles(
         profiles["month_coverage_p95"] = 0.0
         profiles["month_coverage_full_rate"] = 0.0
 
-    # Tipo documento distribution
     tipo_counts = (
         items.groupby(["cliente", "tipo_documento"]).size().unstack(fill_value=0)
     )
@@ -459,7 +443,6 @@ def compute_client_profiles(
     profiles["cliente"] = profiles["cliente"].astype("string")
 
     return profiles
-
 
 def _compute_acf_features(events: pd.DataFrame) -> pd.DataFrame:
     """Compute Autocorrelation Function (ACF) features for inter-event gaps.
@@ -479,15 +462,14 @@ def _compute_acf_features(events: pd.DataFrame) -> pd.DataFrame:
     """
     if "inter_event_gap_days" not in events.columns:
         return pd.DataFrame(columns=["acf_lag1", "acf_lag7", "acf_lag14", "acf_lag30"])
-    
+
     acf_records = []
     lags = [1, 7, 14, 30]
-    
+
     for cliente, group in events.groupby("cliente"):
         gaps = group["inter_event_gap_days"].dropna().to_numpy(dtype=float)
-        
+
         if gaps.size < 3:
-            # Not enough data for ACF
             acf_values = [0.0] * len(lags)
         else:
             acf_values = []
@@ -495,7 +477,6 @@ def _compute_acf_features(events: pd.DataFrame) -> pd.DataFrame:
                 if lag >= gaps.size:
                     acf_values.append(0.0)
                 else:
-                    # Compute Pearson correlation at given lag
                     x = gaps[:-lag]
                     y = gaps[lag:]
                     if x.size < 2:
@@ -506,7 +487,7 @@ def _compute_acf_features(events: pd.DataFrame) -> pd.DataFrame:
                             acf_values.append(corr if not np.isnan(corr) else 0.0)
                         except:
                             acf_values.append(0.0)
-        
+
         acf_records.append({
             "cliente": cliente,
             "acf_lag1": acf_values[0],
@@ -514,11 +495,10 @@ def _compute_acf_features(events: pd.DataFrame) -> pd.DataFrame:
             "acf_lag14": acf_values[2],
             "acf_lag30": acf_values[3],
         })
-    
+
     acf_df = pd.DataFrame(acf_records)
     acf_df = acf_df.set_index("cliente")
     return acf_df
-
 
 def _percentile_rank_to_decile(rank: pd.Series, count: pd.Series) -> pd.Series:
     """Convert within-group ranks to deciles spanning 0-9."""
@@ -526,7 +506,6 @@ def _percentile_rank_to_decile(rank: pd.Series, count: pd.Series) -> pd.Series:
         ratio = np.where(count > 1, (rank - 1) / (count - 1), 0.0)
     ratio = np.clip(ratio, 0.0, 1.0)
     return pd.Series(np.floor(ratio * 10).astype(int), index=rank.index)
-
 
 def build_feature_matrix(
     train_df: pd.DataFrame,
@@ -702,7 +681,7 @@ def build_feature_matrix(
     count_within = group.transform("count")
     features["amt_decile_client"] = _percentile_rank_to_decile(rank_within, count_within)
 
-    stats = group.agg(["mean", "std"])  # type: ignore[arg-type]
+    stats = group.agg(["mean", "std"])
     stats = stats.rename(columns={"mean": "_mean_amt", "std": "_std_amt"})
     features = features.merge(stats, left_on="cliente", right_index=True, how="left")
     features["amt_z_client"] = np.where(
@@ -721,10 +700,8 @@ def build_feature_matrix(
         )
     features["amt_ratio_B"] = np.clip(ratio, 0.0, 1.0)
 
-    # Join client profiles
     features = features.merge(client_profiles, on="cliente", how="left")
 
-    # Assemble final feature set
     log_consecutive_block_examples(features)
     features.drop(columns=["_doc_month", "_seq_block_id"], inplace=True, errors="ignore")
 
@@ -793,7 +770,6 @@ def build_feature_matrix(
 
     return feature_matrix
 
-
 def log_feature_statistics(feature_matrix: pd.DataFrame, columns: Sequence[str]) -> None:
     """Log mean and variance for the selected feature columns."""
     for column in columns:
@@ -810,7 +786,6 @@ def log_feature_statistics(feature_matrix: pd.DataFrame, columns: Sequence[str])
             mean_val = float(array_values.mean())
             var_val = float(array_values.var(ddof=0))
         LOGGER.info("Feature %s statistics -> mean: %.6f, variance: %.6f", column, mean_val, var_val)
-
 
 def log_mean_gini_per_client(feature_matrix: pd.DataFrame) -> None:
     """Log the mean event-level Gini coefficient per client."""
@@ -829,7 +804,6 @@ def log_mean_gini_per_client(feature_matrix: pd.DataFrame) -> None:
         "Mean event_gini_amounts_open per client: %s",
         gini_by_client.round(6).to_dict(),
     )
-
 
 def log_consecutive_block_examples(features: pd.DataFrame, max_examples: int = 3) -> None:
     """Log sample consecutive blocks with their lengths and date ranges."""
@@ -894,7 +868,6 @@ def log_consecutive_block_examples(features: pd.DataFrame, max_examples: int = 3
             block_docs,
         )
 
-
 def save_feature_outputs(
     feature_matrix: pd.DataFrame,
     client_profiles: pd.DataFrame,
@@ -929,7 +902,6 @@ def save_feature_outputs(
         events_path,
     )
 
-
 def run_random_forest_smoke_test(train_features: pd.DataFrame) -> None:
     """Fit a small RandomForest to report top feature importances."""
     if train_features.empty:
@@ -938,7 +910,7 @@ def run_random_forest_smoke_test(train_features: pd.DataFrame) -> None:
 
     try:
         from sklearn.ensemble import RandomForestClassifier
-    except ImportError as exc:  # pragma: no cover
+    except ImportError as exc:
         raise RuntimeError(
             "scikit-learn is required for the smoke test. Please install scikit-learn."
         ) from exc
@@ -966,7 +938,6 @@ def run_random_forest_smoke_test(train_features: pd.DataFrame) -> None:
     print("RandomForest feature importances (top 10):")
     print(top10.to_string())
 
-
 def main() -> None:
     """Run the complete feature engineering pipeline."""
     configure_logging()
@@ -974,11 +945,10 @@ def main() -> None:
 
     datasets = load_curated_datasets(project_root)
     events_with_calendar = enrich_events_with_calendar_features(datasets["events"])
-    
-    # Prompt 3: pass line_items to compute_client_profiles for month_coverage
+
     line_items = datasets.get("line_items", pd.DataFrame())
     client_profiles = compute_client_profiles(
-        events_with_calendar, 
+        events_with_calendar,
         datasets["event_items"],
         line_items if not line_items.empty else None
     )
@@ -996,11 +966,10 @@ def main() -> None:
 
     log_feature_statistics(feature_matrix, FEATURES_TO_LOG)
     log_mean_gini_per_client(feature_matrix)
-    
-    # Prompt 3: export events_with_features.parquet
+
     save_feature_outputs(feature_matrix, client_profiles, events_with_calendar, project_root)
     run_random_forest_smoke_test(feature_matrix)
 
-
 if __name__ == "__main__":
     main()
+

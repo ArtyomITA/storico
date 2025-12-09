@@ -10,9 +10,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, Mapping, Optional, TypeVar, Union, cast
 
-try:  # pragma: no cover - psutil is optional
-    import psutil  # type: ignore
-except ImportError:  # pragma: no cover - optional dependency
+try:
+    import psutil
+except ImportError:
     psutil = None
 
 from rich.console import Console
@@ -24,11 +24,10 @@ _JSON_FIELDS = ("stage", "cliente", "event_key", "duration_ms", "rows", "seed", 
 
 F = TypeVar("F", bound=Callable[..., Any])
 
-
 class JsonLinesFormatter(logging.Formatter):
     """Format log records as JSON lines capturing contextual metadata."""
 
-    def format(self, record: logging.LogRecord) -> str:  # noqa: D401 (inherit docstring)
+    def format(self, record: logging.LogRecord) -> str:
         payload: Dict[str, Any] = {
             "timestamp": datetime.utcnow().isoformat(timespec="milliseconds") + "Z",
             "level": record.levelname,
@@ -43,18 +42,15 @@ class JsonLinesFormatter(logging.Formatter):
             payload["exc_info"] = self.formatException(record.exc_info)
         return json.dumps(payload, ensure_ascii=False)
 
-
 def _coerce_level(candidate: Union[str, int, None]) -> int:
     if isinstance(candidate, int):
         return candidate
     if isinstance(candidate, str):
-        return logging._nameToLevel.get(candidate.upper(), logging.INFO)  # type: ignore[attr-defined]
+        return logging._nameToLevel.get(candidate.upper(), logging.INFO)
     return logging.INFO
-
 
 _configured = False
 _current_log_file: Optional[Path] = None
-
 
 def configure_logging(
     level: Union[str, int, None] = None,
@@ -111,12 +107,10 @@ def configure_logging(
     _current_log_file = log_path
     return log_path
 
-
 def get_current_log_file() -> Optional[Path]:
     """Return the JSON log file configured for the current process, if any."""
 
     return _current_log_file
-
 
 def _collect_meta(*sources: Mapping[str, Any]) -> Dict[str, Any]:
     collected: Dict[str, Any] = {field: None for field in _JSON_FIELDS}
@@ -126,16 +120,14 @@ def _collect_meta(*sources: Mapping[str, Any]) -> Dict[str, Any]:
                 collected[field] = source[field]
     return collected
 
-
 def _rss_mb() -> Optional[float]:
-    if psutil is None:  # pragma: no cover - optional path
+    if psutil is None:
         return None
     try:
         process = psutil.Process(os.getpid())
         return round(process.memory_info().rss / (1024 * 1024), 2)
-    except Exception:  # pragma: no cover - defensive guard
+    except Exception:
         return None
-
 
 def log_timed(stage_name: Optional[str] = None) -> Callable[[F], F]:
     """Decorator logging execution time (ms) and optional memory footprint."""
@@ -181,5 +173,5 @@ def log_timed(stage_name: Optional[str] = None) -> Callable[[F], F]:
 
     return decorator
 
-
 __all__ = ["configure_logging", "get_current_log_file", "log_timed"]
+

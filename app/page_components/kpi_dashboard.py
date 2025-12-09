@@ -16,8 +16,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from app.utils.export import generate_deeplink
-from src.utils.sap_glossary import get_sap_term, get_sap_tooltip  
-
+from src.utils.sap_glossary import get_sap_term, get_sap_tooltip
 
 @st.cache_data(show_spinner=False, ttl=600)
 def _load_parquet_cached(path: Path) -> pd.DataFrame:
@@ -28,7 +27,6 @@ def _load_parquet_cached(path: Path) -> pd.DataFrame:
     """
     return pd.read_parquet(path)
 
-
 def _apply_filters(
     df: pd.DataFrame,
     selected_clients: List[str],
@@ -38,13 +36,11 @@ def _apply_filters(
     """Apply filters to KPI dataframe."""
     filtered = df.copy()
 
-    # Filter by segment type if specified
     if segment_type and "aggregation_key" in filtered.columns:
         filtered = filtered[filtered["aggregation_key"] == segment_type]
     elif segment_type and "segment_type" in filtered.columns:
         filtered = filtered[filtered["segment_type"] == segment_type]
 
-    # Filter by selected clients
     if selected_clients:
         if "aggregation_value" in filtered.columns:
             filtered = filtered[
@@ -57,7 +53,6 @@ def _apply_filters(
                 | (filtered["segment_type"] != "cliente")
             ]
 
-    # Filter by cardinality bucket
     if cardinality_bucket and cardinality_bucket != "all":
         if "aggregation_value" in filtered.columns:
             filtered = filtered[
@@ -73,7 +68,6 @@ def _apply_filters(
 
     return filtered
 
-
 def _render_ranking_tab(kpi_df: pd.DataFrame, filtered_df: pd.DataFrame) -> None:
     """Render ranking metrics tab with business-friendly language.
     
@@ -86,27 +80,25 @@ def _render_ranking_tab(kpi_df: pd.DataFrame, filtered_df: pd.DataFrame) -> None
         "Metriche più alte → raccomandazioni più accurate."
     )
 
-    # Global metrics
     global_row = filtered_df[filtered_df.get("aggregation_key", "") == "global"]
     if not global_row.empty:
         st.markdown("### 📊 Performance Complessiva")
         st.caption("Metriche aggregate su tutti gli eventi di pagamento.")
-        
-        # Top-K metrics in columns
+
         st.markdown("#### Accuratezza Top-K Raccomandazioni")
-        
+
         k_values = [1, 2, 3, 5]
         tabs_k = st.tabs([f"Top {k}" for k in k_values])
-        
+
         for idx, k in enumerate(k_values):
             with tabs_k[idx]:
                 col1, col2, col3, col4 = st.columns(4)
-                
+
                 precision = global_row.iloc[0].get(f"precision@{k}", 0.0)
                 hit_rate = global_row.iloc[0].get(f"hit_rate@{k}", 0.0)
                 coverage = global_row.iloc[0].get(f"coverage@{k}", 0.0)
                 ndcg = global_row.iloc[0].get(f"ndcg@{k}", 0.0)
-                
+
                 with col1:
                     st.metric(
                         f"✅ Precisione",
@@ -118,7 +110,7 @@ def _render_ranking_tab(kpi_df: pd.DataFrame, filtered_df: pd.DataFrame) -> None
                             f"🔬 **Dettaglio Tecnico:** `Precision@{k} = (# partite corrette trovate nelle prime {k} posizioni) / {k}`"
                         ),
                     )
-                
+
                 with col2:
                     st.metric(
                         f"🎯 Tasso di Successo",
@@ -131,7 +123,7 @@ def _render_ranking_tab(kpi_df: pd.DataFrame, filtered_df: pd.DataFrame) -> None
                             f"🔬 **Dettaglio Tecnico:** `Hit_Rate@{k} = (# partite corrette trovate nelle prime {k}) / (# totale partite corrette nell'evento)`"
                         ),
                     )
-                
+
                 with col3:
                     st.metric(
                         f"📦 Copertura Eventi",
@@ -144,7 +136,7 @@ def _render_ranking_tab(kpi_df: pd.DataFrame, filtered_df: pd.DataFrame) -> None
                             f"🔬 **Dettaglio Tecnico:** `Coverage@{k} = (# eventi con almeno 1 hit nelle prime {k}) / (# totale eventi)`"
                         ),
                     )
-                
+
                 with col4:
                     st.metric(
                         f"📈 Rilevanza Posizionale",
@@ -158,13 +150,12 @@ def _render_ranking_tab(kpi_df: pd.DataFrame, filtered_df: pd.DataFrame) -> None
                             f"alle posizioni (posizione 1 vale più di posizione 5)."
                         ),
                     )
-        
-        # MRR metric (standalone)
+
         st.markdown("---")
         st.markdown("#### 🥇 Posizione della Prima Partita Corretta")
-        
+
         col_mrr1, col_mrr2, col_mrr3 = st.columns([2, 2, 3])
-        
+
         with col_mrr1:
             mrr = global_row.iloc[0].get("mrr", 0.0)
             st.metric(
@@ -178,9 +169,8 @@ def _render_ranking_tab(kpi_df: pd.DataFrame, filtered_df: pd.DataFrame) -> None
                     "Es: se la prima corretta è in posizione 1 → 1/1=1.0, posizione 2 → 1/2=0.5, posizione 3 → 1/3=0.33."
                 ),
             )
-        
+
         with col_mrr2:
-            # Compute avg position from MRR (1/MRR)
             avg_position = 1.0 / mrr if mrr > 0 else 0.0
             st.metric(
                 "Posizione Media Prima Hit",
@@ -190,9 +180,8 @@ def _render_ranking_tab(kpi_df: pd.DataFrame, filtered_df: pd.DataFrame) -> None
                     "Calcolato come `1 / MRR`. Più bassa è la posizione, meglio è (idealmente posizione 1)."
                 ),
             )
-        
+
         with col_mrr3:
-            # Visual indicator
             if mrr >= 0.7:
                 indicator = "🟢 Eccellente"
                 desc = "Prima partita corretta quasi sempre nelle prime 2 posizioni"
@@ -205,11 +194,10 @@ def _render_ranking_tab(kpi_df: pd.DataFrame, filtered_df: pd.DataFrame) -> None
             else:
                 indicator = "🔴 Da Migliorare"
                 desc = "Prima partita corretta spesso oltre la 4a posizione"
-            
+
             st.markdown(f"**Valutazione:** {indicator}")
             st.caption(desc)
 
-    # Cardinality buckets
     st.markdown("---")
     bucket_rows = filtered_df[filtered_df.get("aggregation_key", "") == "cardinality_bucket"]
     if not bucket_rows.empty:
@@ -218,13 +206,12 @@ def _render_ranking_tab(kpi_df: pd.DataFrame, filtered_df: pd.DataFrame) -> None
             "Come varia l'accuratezza in base al **numero di partite** da identificare (cardinalità k). "
             "Eventi con k=1 (singola partita) sono più facili; k≥3 (multiple partite) più complessi."
         )
-        
-        # Format table with percentages
+
         display_bucket = bucket_rows.copy()
         for col in ["precision@3", "hit_rate@3", "coverage@3", "ndcg@3", "mrr"]:
             if col in display_bucket.columns:
                 display_bucket[col] = display_bucket[col].apply(lambda x: f"{x:.1%}")
-        
+
         st.dataframe(
             display_bucket[
                 [
@@ -250,10 +237,9 @@ def _render_ranking_tab(kpi_df: pd.DataFrame, filtered_df: pd.DataFrame) -> None
             use_container_width=True,
             hide_index=True,
         )
-        
-        # Visualization: bar chart per cardinality bucket
+
         st.markdown("#### 📊 Confronto Visuale per Cardinalità")
-        
+
         metric_to_plot = st.selectbox(
             "Seleziona metrica da visualizzare",
             ["precision@3", "hit_rate@3", "coverage@3", "ndcg@3", "mrr"],
@@ -266,7 +252,7 @@ def _render_ranking_tab(kpi_df: pd.DataFrame, filtered_df: pd.DataFrame) -> None
             }.get(x, x),
             key="metric_selector_bucket",
         )
-        
+
         fig_bucket = px.bar(
             bucket_rows,
             x="aggregation_value",
@@ -285,31 +271,29 @@ def _render_ranking_tab(kpi_df: pd.DataFrame, filtered_df: pd.DataFrame) -> None
             color_discrete_sequence=px.colors.qualitative.Set2,
             text=metric_to_plot,
         )
-        
+
         fig_bucket.update_traces(
             texttemplate='%{text:.1%}',
             textposition='outside',
         )
-        
+
         fig_bucket.update_layout(
             showlegend=False,
             yaxis_tickformat='.0%',
             yaxis_range=[0, max(bucket_rows[metric_to_plot]) * 1.15],
             height=400,
         )
-        
+
         st.plotly_chart(fig_bucket, use_container_width=True)
 
-    # Per-client metrics
     st.markdown("---")
     client_rows = filtered_df[filtered_df.get("aggregation_key", "") == "cliente"]
     if not client_rows.empty:
         st.markdown("### 🏢 Performance per Cliente")
         st.caption("Dettaglio accuratezza per singolo cliente. Utile per identificare clienti con pattern predittivi difficili.")
 
-        # Search and filter controls
         col_search, col_sort = st.columns([2, 1])
-        
+
         with col_search:
             search_term = st.text_input(
                 "🔍 Cerca cliente (ID o nome parziale)",
@@ -317,13 +301,13 @@ def _render_ranking_tab(kpi_df: pd.DataFrame, filtered_df: pd.DataFrame) -> None
                 placeholder="es. DEMO_C01",
                 key="client_search_ranking",
             )
-        
+
         display_df = client_rows.copy()
         if search_term:
             display_df = display_df[
                 display_df["aggregation_value"].astype(str).str.contains(search_term, case=False, na=False)
             ]
-        
+
         with col_sort:
             sort_col = st.selectbox(
                 "Ordina per",
@@ -337,30 +321,28 @@ def _render_ranking_tab(kpi_df: pd.DataFrame, filtered_df: pd.DataFrame) -> None
                 }.get(x, x),
                 key="sort_ranking",
             )
-        
+
         sort_order = st.radio(
             "Ordine",
             ["Decrescente (migliori prima)", "Crescente (peggiori prima)"],
             horizontal=True,
             key="sort_order_ranking",
         )
-        
+
         display_df = display_df.sort_values(
             by=sort_col,
             ascending=("Crescente" in sort_order),
         )
-        
-        # Format percentages
+
         display_table = display_df.copy()
         for col in ["precision@1", "precision@3", "hit_rate@3", "coverage@3", "ndcg@3", "mrr"]:
             if col in display_table.columns:
                 display_table[col] = display_table[col].apply(lambda x: f"{x:.1%}")
-        
-        # Pagination
+
         page_size = 20
         total_rows = len(display_table)
         total_pages = (total_rows - 1) // page_size + 1 if total_rows > 0 else 1
-        
+
         col_page1, col_page2, col_page3 = st.columns([2, 1, 2])
         with col_page2:
             current_page = st.number_input(
@@ -371,11 +353,11 @@ def _render_ranking_tab(kpi_df: pd.DataFrame, filtered_df: pd.DataFrame) -> None
                 step=1,
                 key="page_ranking_client",
             )
-        
+
         start_idx = (current_page - 1) * page_size
         end_idx = min(start_idx + page_size, total_rows)
         page_table = display_table.iloc[start_idx:end_idx]
-        
+
         st.dataframe(
             page_table[
                 [
@@ -404,9 +386,8 @@ def _render_ranking_tab(kpi_df: pd.DataFrame, filtered_df: pd.DataFrame) -> None
             hide_index=True,
             height=600,
         )
-        
-        st.caption(f"Mostrando {start_idx + 1}-{end_idx} di {total_rows} clienti")
 
+        st.caption(f"Mostrando {start_idx + 1}-{end_idx} di {total_rows} clienti")
 
 def _render_calibration_tab(
     calibration_summary: pd.DataFrame, calibration_bins: pd.DataFrame, filtered_summary: pd.DataFrame
@@ -423,12 +404,11 @@ def _render_calibration_tab(
         "Calibrazione perfetta → si può **fidarsi dei punteggi** per prendere decisioni."
     )
 
-    # Metrics cards
     st.markdown("### 📊 Metriche di Calibrazione")
     st.caption(
         "Valori più **bassi** sono migliori. Idealmente < 0.05 (5%) indica calibrazione eccellente."
     )
-    
+
     models = filtered_summary["model"].unique()
 
     for model in models:
@@ -437,22 +417,21 @@ def _render_calibration_tab(
         ]
         if not model_summary.empty:
             st.markdown(f"#### 🤖 Modello: **{model.upper()}**")
-            
+
             col1, col2, col3, col4 = st.columns(4)
-            
+
             brier = model_summary.iloc[0].get("brier_score", 0.0)
             ece = model_summary.iloc[0].get("ece", 0.0)
             mce = model_summary.iloc[0].get("mce", 0.0)
-            
+
             with col1:
-                # Brier Score indicator
                 if brier <= 0.1:
                     brier_status = "🟢 Eccellente"
                 elif brier <= 0.2:
                     brier_status = "🟡 Buono"
                 else:
                     brier_status = "🔴 Da Migliorare"
-                
+
                 st.metric(
                     "📐 Errore Quadratico Medio",
                     f"{brier:.4f}",
@@ -465,16 +444,15 @@ def _render_calibration_tab(
                     ),
                 )
                 st.caption(brier_status)
-            
+
             with col2:
-                # ECE indicator
                 if ece <= 0.05:
                     ece_status = "🟢 Eccellente"
                 elif ece <= 0.10:
                     ece_status = "🟡 Buono"
                 else:
                     ece_status = "🔴 Da Migliorare"
-                
+
                 st.metric(
                     "📊 Gap di Calibrazione Medio",
                     f"{ece:.1%}",
@@ -488,16 +466,15 @@ def _render_calibration_tab(
                     ),
                 )
                 st.caption(ece_status)
-            
+
             with col3:
-                # MCE indicator
                 if mce <= 0.10:
                     mce_status = "🟢 Eccellente"
                 elif mce <= 0.20:
                     mce_status = "🟡 Accettabile"
                 else:
                     mce_status = "🔴 Critico"
-                
+
                 st.metric(
                     "⚠️ Gap Massimo (Worst Case)",
                     f"{mce:.1%}",
@@ -510,9 +487,8 @@ def _render_calibration_tab(
                     ),
                 )
                 st.caption(mce_status)
-            
+
             with col4:
-                # Overall calibration quality
                 if ece <= 0.05 and mce <= 0.10:
                     overall = "🟢 Ben Calibrato"
                     overall_desc = "Probabilità affidabili, puoi fidarti dei punteggi"
@@ -522,12 +498,11 @@ def _render_calibration_tab(
                 else:
                     overall = "🔴 Calibrazione Scarsa"
                     overall_desc = "Probabilità inaffidabili, usa solo ranking relativo"
-                
+
                 st.markdown(f"**Valutazione Complessiva:**")
                 st.markdown(f"**{overall}**")
                 st.caption(overall_desc)
 
-    # Reliability curves
     st.markdown("---")
     st.markdown("### 📈 Curve di Affidabilità (Reliability Diagrams)")
     st.caption(
@@ -537,9 +512,8 @@ def _render_calibration_tab(
         "Curve sotto → modello **sovrastima** (troppo sicuro di sé)."
     )
 
-    # Filter controls
     col_model, col_segment = st.columns(2)
-    
+
     with col_model:
         model_filter = st.multiselect(
             "Seleziona modelli da confrontare",
@@ -548,7 +522,7 @@ def _render_calibration_tab(
             key="model_filter_calibration",
             help="Confronta calibrazione tra CatBoost, AutoGluon, Champion, etc.",
         )
-    
+
     with col_segment:
         segment_filter = st.selectbox(
             "Livello di aggregazione",
@@ -567,10 +541,8 @@ def _render_calibration_tab(
     ]
 
     if not filtered_bins.empty:
-        # Create Plotly line chart
         fig = go.Figure()
 
-        # Add diagonal reference line (perfect calibration)
         fig.add_trace(
             go.Scatter(
                 x=[0, 1],
@@ -583,10 +555,9 @@ def _render_calibration_tab(
             )
         )
 
-        # Add reliability curves per model and segment
         colors = px.colors.qualitative.Plotly
         color_idx = 0
-        
+
         for model in filtered_bins["model"].unique():
             for segment_value in filtered_bins["segment_value"].unique():
                 segment_bins = filtered_bins[
@@ -631,10 +602,9 @@ def _render_calibration_tab(
                 x=1.02,
             ),
         )
-        
+
         st.plotly_chart(fig, use_container_width=True)
-        
-        # Interpretation guide
+
         with st.expander("📖 Come Leggere il Grafico"):
             st.markdown(
                 """
@@ -660,7 +630,6 @@ def _render_calibration_tab(
     else:
         st.info("Nessun dato di calibrazione disponibile per i filtri selezionati. Prova a cambiare modello o segmento.")
 
-
 def _download_csv(df: pd.DataFrame, filename: str) -> None:
     """Provide CSV download button."""
     csv_buffer = io.StringIO()
@@ -674,7 +643,6 @@ def _download_csv(df: pd.DataFrame, filename: str) -> None:
         mime="text/csv",
     )
 
-
 def render_kpi_dashboard_page(
     tables: Dict[str, pd.DataFrame],
     developer_metrics: Dict[str, Any],
@@ -686,7 +654,7 @@ def render_kpi_dashboard_page(
     Shows precision@k, hit_rate@k, nDCG@k, MRR, coverage@k, Brier, ECE, MCE, reliability curves.
     """
     st.title("📊 Dashboard Qualità Predittiva")
-    
+
     st.markdown(
         """
         Questo dashboard mostra **quanto bene il modello predice le partite corrette** per i pagamenti clienti.
@@ -698,12 +666,11 @@ def render_kpi_dashboard_page(
         """
     )
 
-    # Load data (support mock mode via data_root_func)
     if data_root_func and callable(data_root_func):
         curated_dir = data_root_func() / "curated"
     else:
         curated_dir = Path(__file__).resolve().parents[2] / "data" / "curated"
-    
+
     kpi_ranking_path = curated_dir / "kpi_ranking.parquet"
     calibration_summary_path = curated_dir / "calibration_summary.parquet"
     calibration_bins_path = curated_dir / "calibration_bins.parquet"
@@ -734,12 +701,10 @@ def render_kpi_dashboard_page(
 
     kpi_ranking = _load_parquet_cached(kpi_ranking_path)
 
-    # Filters panel
     st.sidebar.markdown("---")
     st.sidebar.header("🔧 Filtri Dashboard")
     st.sidebar.caption("Filtra metriche per clienti specifici o complessità eventi.")
 
-    # Client multi-select
     available_clients = []
     if "aggregation_value" in kpi_ranking.columns:
         client_rows = kpi_ranking[kpi_ranking["aggregation_key"] == "cliente"]
@@ -756,7 +721,6 @@ def render_kpi_dashboard_page(
         key="clients_filter_kpi",
     )
 
-    # Cardinality bucket filter
     cardinality_options = ["all", "k=1", "k=2-3", "k>=4"]
     cardinality_bucket = st.sidebar.selectbox(
         "📦 Complessità Eventi (Cardinalità)",
@@ -777,12 +741,11 @@ def render_kpi_dashboard_page(
         ),
         key="cardinality_filter_kpi",
     )
-    
-    # Model filter (if multiple models available)
+
     available_models = []
     if not calibration_summary.empty and "model" in calibration_summary.columns:
         available_models = sorted(calibration_summary["model"].unique().tolist())
-    
+
     if len(available_models) > 1:
         selected_model = st.sidebar.selectbox(
             "🤖 Modello",
@@ -803,7 +766,6 @@ def render_kpi_dashboard_page(
     else:
         selected_model = "all"
 
-    # Apply filters
     filtered_kpi = _apply_filters(
         kpi_ranking,
         selected_clients,
@@ -825,19 +787,17 @@ def render_kpi_dashboard_page(
                 filtered_calibration_summary["model"] == selected_model
             ]
 
-    # Tabs
     st.markdown("---")
     tab1, tab2 = st.tabs(["🎯 Qualità Raccomandazioni", "🎯 Affidabilità Probabilità"])
 
     with tab1:
         _render_ranking_tab(kpi_ranking, filtered_kpi)
-        
+
         st.markdown("---")
         st.markdown("### 📥 Export Dati Ranking")
         st.caption("Scarica tabella metriche filtrate in formato CSV per analisi esterne (Excel, Python, R, etc.)")
         _download_csv(filtered_kpi, "kpi_ranking_filtered.csv")
-        
-        # Deep-link
+
         with st.expander("� Deep-Link Condivisibile"):
             st.caption("Genera URL con filtri correnti per condividere questa vista con colleghi.")
             deeplink_url = generate_deeplink(
@@ -855,30 +815,27 @@ def render_kpi_dashboard_page(
     with tab2:
         if not calibration_summary.empty:
             _render_calibration_tab(calibration_summary, calibration_bins, filtered_calibration_summary)
-            
+
             st.markdown("---")
             st.markdown("### 📥 Export Dati Calibrazione")
             st.caption("Scarica metriche e bin di calibrazione per analisi dettagliate.")
-            
+
             col1, col2 = st.columns(2)
-            
+
             with col1:
                 st.markdown("**Metriche Calibrazione (Summary)**")
                 _download_csv(filtered_calibration_summary, "calibration_summary_filtered.csv")
-            
+
             with col2:
                 st.markdown("**Bin Calibrazione (Curve)**")
-                # Filter calibration bins by same criteria
                 filtered_calibration_bins = calibration_bins
                 if not calibration_bins.empty:
-                    # Apply model filter if specified
                     if "model_filter_calibration" in st.session_state:
                         model_filter = st.session_state.get("model_filter_calibration", [])
                         if model_filter:
                             filtered_calibration_bins = filtered_calibration_bins[
                                 filtered_calibration_bins["model"].isin(model_filter)
                             ]
-                    # Apply segment filter if specified
                     if "segment_filter_calibration" in st.session_state:
                         segment_filter = st.session_state.get("segment_filter_calibration", "global")
                         if segment_filter:
@@ -886,8 +843,7 @@ def render_kpi_dashboard_page(
                                 filtered_calibration_bins["segment_type"] == segment_filter
                             ]
                 _download_csv(filtered_calibration_bins, "calibration_bins_filtered.csv")
-            
-            # Deep-link
+
             with st.expander("� Deep-Link Condivisibile"):
                 st.caption("Genera URL con filtri correnti per condividere questa vista con colleghi.")
                 deeplink_url_cal = generate_deeplink(
@@ -912,3 +868,4 @@ def render_kpi_dashboard_page(
                 "python -m src.analytics.calibration\n"
                 "```"
             )
+

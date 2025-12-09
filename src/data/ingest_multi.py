@@ -34,7 +34,6 @@ DEFAULT_DEDUP_KEYS: Sequence[str] = (
     "data_documento",
 )
 
-
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     """Parse CLI arguments for the ingestion command."""
     parser = argparse.ArgumentParser(
@@ -110,7 +109,6 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 
     return parser.parse_args(argv)
 
-
 def _expand_pattern(pattern: str, project_root: Path) -> List[Path]:
     """Expand a single filesystem pattern into matching files."""
     candidate = Path(pattern)
@@ -124,7 +122,6 @@ def _expand_pattern(pattern: str, project_root: Path) -> List[Path]:
 
     paths = [path for path in files if path.suffix.lower() in {".csv", ".xlsx"} and path.is_file()]
     return sorted(set(paths))
-
 
 def resolve_input_files(
     input_patterns: Iterable[str] | None,
@@ -158,7 +155,6 @@ def resolve_input_files(
         )
     return files
 
-
 def load_and_normalise(
     files: Sequence[Path],
     use_extended_map: bool = False,
@@ -176,24 +172,22 @@ def load_and_normalise(
     """
     frames: List[pd.DataFrame] = []
     original_row_count = 0
-    
+
     for path in files:
         frame = read_raw_file(path, strict=strict)
         original_row_count += len(frame)
         normalised = normalise_dataframe(frame, use_extended_map=use_extended_map)
         frames.append(normalised)
         LOGGER.info("  %s: %d rows", path.name, len(normalised))
-    
+
     dataset = pd.concat(frames, ignore_index=True)
-    
-    # Filter to only expected columns if using extended map
+
     if use_extended_map:
         expected_columns = list(COL_MAP.values())
         available_columns = [col for col in expected_columns if col in dataset.columns]
         dataset = dataset.loc[:, available_columns]
-    
-    return dataset, original_row_count
 
+    return dataset, original_row_count
 
 def deduplicate_dataset(
     dataset: pd.DataFrame,
@@ -216,7 +210,6 @@ def deduplicate_dataset(
             keep,
         )
     return deduped
-
 
 def build_doc_map(dataset: pd.DataFrame) -> pd.DataFrame:
     """Aggregate a document-level view from line items for quick lookup."""
@@ -289,11 +282,9 @@ def build_doc_map(dataset: pd.DataFrame) -> pd.DataFrame:
 
     return doc_map
 
-
 def ensure_parent(path: Path) -> None:
     """Ensure the parent directory of a path exists."""
     path.parent.mkdir(parents=True, exist_ok=True)
-
 
 def run(argv: Sequence[str] | None = None) -> None:
     """Entrypoint for programmatic execution (testable main)."""
@@ -310,8 +301,7 @@ def run(argv: Sequence[str] | None = None) -> None:
         strict=args.strict,
     )
     dataset = deduplicate_dataset(dataset, args.dedupe_keys, keep_first=args.keep_first)
-    
-    # Use quality report if extended map, else legacy summary
+
     if args.use_extended_map:
         log_quality_report(dataset, original_row_count)
     else:
@@ -335,6 +325,6 @@ def run(argv: Sequence[str] | None = None) -> None:
         doc_map.to_parquet(docmap_path, compression="snappy", index=False)
         LOGGER.info("Wrote document map to %s", docmap_path)
 
-
 if __name__ == "__main__":
     run()
+

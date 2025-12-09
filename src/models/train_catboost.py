@@ -35,18 +35,13 @@ class IdentityCalibrator:
     def predict(self, values: np.ndarray) -> np.ndarray:
         return np.asarray(values)
 
-
-
-
 @dataclass
 class DatasetSplit:
     train_idx: np.ndarray
     valid_idx: np.ndarray
 
-
 def configure_logging(level: int | str | None = logging.INFO) -> Path:
     return setup_logging(level)
-
 
 def load_curated_tables(project_root: Path) -> Dict[str, pd.DataFrame]:
     curated_dir = project_root / CURATED_DIR
@@ -67,7 +62,6 @@ def load_curated_tables(project_root: Path) -> Dict[str, pd.DataFrame]:
         tables[name] = pd.read_parquet(path)
     return tables
 
-
 def enrich_features(features: pd.DataFrame, event_items: pd.DataFrame) -> pd.DataFrame:
     df = features.copy()
     if not event_items.empty:
@@ -87,7 +81,6 @@ def enrich_features(features: pd.DataFrame, event_items: pd.DataFrame) -> pd.Dat
         df[col] = df[col].fillna("UNKNOWN").astype(str)
     return df
 
-
 def temporal_split(df: pd.DataFrame, events: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame]:
     if "data_pareggio" not in events.columns:
         raise ValueError("events table must include data_pareggio")
@@ -105,7 +98,6 @@ def temporal_split(df: pd.DataFrame, events: pd.DataFrame) -> Tuple[pd.DataFrame
         train_df = train_df.iloc[:-len(test_df)]
     return train_df, test_df
 
-
 def select_features(df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.Series, List[str], List[int]]:
     target = df["label"].astype(int)
     drop_cols = ["label", "data_pareggio", "cliente", "event_key", "numero_documento"]
@@ -118,13 +110,11 @@ def select_features(df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.Series, List[str
     cat_indices = [cast(int, feature_df.columns.get_loc(col)) for col in categorical_cols]
     return feature_df, target, categorical_cols, cat_indices
 
-
 def build_train_validation_split(train_df: pd.DataFrame) -> DatasetSplit:
     n_samples = len(train_df)
     groups = train_df["cliente"].astype(str).to_numpy()
     unique_groups = np.unique(groups)
     if n_samples < 3 or unique_groups.size < 2:
-        # Fallback: simple chronological split 80/20
         split_point = max(1, int(n_samples * 0.8))
         if split_point >= n_samples:
             split_point = n_samples - 1
@@ -145,7 +135,6 @@ def build_train_validation_split(train_df: pd.DataFrame) -> DatasetSplit:
     split_iter = kfold.split(indices, groups=groups)
     train_idx, valid_idx = next(split_iter)
     return DatasetSplit(train_idx=train_idx, valid_idx=valid_idx)
-
 
 def train_model(
     features: pd.DataFrame,
@@ -172,7 +161,6 @@ def train_model(
     model.fit(train_pool, eval_set=valid_pool, use_best_model=True)
     return model
 
-
 def calibrate_probabilities(
     model: CatBoostClassifier,
     features: pd.DataFrame,
@@ -190,7 +178,6 @@ def calibrate_probabilities(
     calibrator.fit(raw_probs, y_valid)
     return calibrator
 
-
 def evaluate_invoice_metrics(probs: np.ndarray, labels: np.ndarray) -> Dict[str, float]:
     metrics: Dict[str, float] = {}
     unique_labels = np.unique(labels)
@@ -202,7 +189,6 @@ def evaluate_invoice_metrics(probs: np.ndarray, labels: np.ndarray) -> Dict[str,
         metrics["log_loss"] = float(log_loss(labels, probs, labels=[0, 1]))
         metrics["auc_pr"] = float(average_precision_score(labels, probs))
     return metrics
-
 
 def evaluate_event_metrics(df: pd.DataFrame, probs: np.ndarray) -> Tuple[pd.DataFrame, pd.DataFrame]:
     df = df.copy()
@@ -243,7 +229,6 @@ def evaluate_event_metrics(df: pd.DataFrame, probs: np.ndarray) -> Tuple[pd.Data
 
     return pd.DataFrame(event_records), pd.DataFrame(client_rows)
 
-
 def save_artifacts(model: CatBoostClassifier, calibrator: IsotonicRegression, project_root: Path) -> None:
     models_dir = project_root / MODELS_DIR
     models_dir.mkdir(parents=True, exist_ok=True)
@@ -252,7 +237,6 @@ def save_artifacts(model: CatBoostClassifier, calibrator: IsotonicRegression, pr
         pickle.dump(calibrator, f)
     LOGGER.info("Saved model to %s and calibrator to %s", models_dir / MODEL_PATH.name, models_dir / CALIBRATOR_PATH.name)
 
-
 def save_client_metrics(df: pd.DataFrame, project_root: Path) -> Path:
     curated_dir = project_root / CURATED_DIR
     curated_dir.mkdir(parents=True, exist_ok=True)
@@ -260,7 +244,6 @@ def save_client_metrics(df: pd.DataFrame, project_root: Path) -> Path:
     df.to_parquet(output_path, compression="snappy", index=False)
     LOGGER.info("Saved client metrics to %s", output_path)
     return output_path
-
 
 def main() -> None:
     configure_logging()
@@ -295,6 +278,6 @@ def main() -> None:
     else:
         LOGGER.warning("No client metrics computed.")
 
-
-if __name__ == "__main__":  # pragma: no cover
+if __name__ == "__main__":
     main()
+

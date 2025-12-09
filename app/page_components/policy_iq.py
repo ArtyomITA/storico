@@ -12,12 +12,6 @@ from app.utils.export import export_dataframe_to_csv, generate_deeplink
 
 logger = logging.getLogger(__name__)
 
-
-# ============================================================================
- # Policy Toggle (imported from pattern_card_v2)
-# ============================================================================
-
- # Policy deterministiche disponibili (same as pattern_card_v2)
 DETERMINISTIC_POLICIES: List[str] = [
     "fifo",
     "lifo",
@@ -30,13 +24,7 @@ DETERMINISTIC_POLICIES: List[str] = [
     "typeprio",
 ]
 
- # Policy labels (imported from pattern_card_v2 for consistency)
 from app.page_components.pattern_card_v2 import POLICY_LABELS_IT
-
-
-# ============================================================================
- # Policy Explanations (Business-Friendly)
-# ============================================================================
 
 POLICY_EXPLANATIONS: Dict[str, Dict[str, str]] = {
     "fifo": {
@@ -111,24 +99,21 @@ POLICY_EXPLANATIONS: Dict[str, Dict[str, str]] = {
     }
 }
 
-
 def render_policy_explain_tile(policy_name: str) -> None:
     """Render expander tile with business-friendly explanation for a policy."""
     if policy_name not in POLICY_EXPLANATIONS:
         st.warning(f"Spiegazione non disponibile per policy '{policy_name}'")
         return
-    
+
     expl = POLICY_EXPLANATIONS[policy_name]
-    
+
     with st.expander(expl["title"], expanded=False):
         st.markdown(f"**📘 Cosa fa**: {expl['simple']}")
         st.markdown(expl["example"])
         st.markdown(expl["why"])
-        
-        # Technical details in collapsed section
+
         with st.expander("🔬 Dettagli Tecnici (per sviluppatori)", expanded=False):
             st.code(expl["technical"], language="python")
-
 
 def _render_policy_toggle_sidebar_iq() -> List[str]:
     """Render sidebar UI per toggle policy deterministiche (Policy IQ page).
@@ -142,8 +127,7 @@ def _render_policy_toggle_sidebar_iq() -> List[str]:
         "Seleziona quali policy mostrare nella confusion matrix e nei grafici. "
         "Il toggle agisce **solo sulla visualizzazione** (dati a disco non modificati)."
     )
-    
-    # Multiselect per policy standard (default: tutte attive)
+
     selected_policies = st.sidebar.multiselect(
         "Policy attive",
         options=DETERMINISTIC_POLICIES,
@@ -152,11 +136,10 @@ def _render_policy_toggle_sidebar_iq() -> List[str]:
         help="Scegli quali policy deterministiche mostrare nei grafici e nelle tabelle",
         key="policy_iq_toggle_multiselect",
     )
-    
-    # Checkbox separata per RegMonth (default: OFF)
+
     st.sidebar.markdown("---")
     st.sidebar.markdown("**Policy Avanzata:**")
-    
+
     show_regmonth = st.sidebar.checkbox(
         POLICY_LABELS_IT.get("regmonth", "RegMonth"),
         value=False,
@@ -169,22 +152,15 @@ def _render_policy_toggle_sidebar_iq() -> List[str]:
             "Policy nascosta di default perché può essere fuorviante."
         ),
     )
-    
-    # Build active policies list
+
     active_policies = list(selected_policies)
     if show_regmonth:
         active_policies.append("regmonth")
-    
-    # Debug info (optional, for developer mode)
+
     if st.sidebar.checkbox("🔍 Debug policy attive (IQ)", value=False, key="debug_policy_iq_toggle"):
         st.sidebar.json({"active_policies": active_policies, "count": len(active_policies)})
-    
+
     return active_policies
-
-
-# ============================================================================
-# Data Loading
-# ============================================================================
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def load_policy_confusion_matrix(data_dir: Path) -> pd.DataFrame:
@@ -193,11 +169,10 @@ def load_policy_confusion_matrix(data_dir: Path) -> pd.DataFrame:
     if not path.exists():
         logger.warning(f"Policy confusion matrix not found: {path}")
         return pd.DataFrame()
-    
+
     df = pd.read_parquet(path)
     logger.info(f"Loaded policy confusion matrix: {df.shape}")
     return df
-
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def load_policy_metrics(data_dir: Path) -> pd.DataFrame:
@@ -206,11 +181,10 @@ def load_policy_metrics(data_dir: Path) -> pd.DataFrame:
     if not path.exists():
         logger.warning(f"Policy metrics not found: {path}")
         return pd.DataFrame()
-    
+
     df = pd.read_parquet(path)
     logger.info(f"Loaded policy metrics: {df.shape}")
     return df
-
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def load_per_event_policy_scores(data_dir: Path) -> pd.DataFrame:
@@ -219,11 +193,10 @@ def load_per_event_policy_scores(data_dir: Path) -> pd.DataFrame:
     if not path.exists():
         logger.warning(f"Per-event policy scores not found: {path}")
         return pd.DataFrame()
-    
+
     df = pd.read_parquet(path)
     logger.info(f"Loaded per-event policy scores: {df.shape}")
     return df
-
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def load_event_policy_predictions(data_dir: Path) -> pd.DataFrame:
@@ -232,15 +205,10 @@ def load_event_policy_predictions(data_dir: Path) -> pd.DataFrame:
     if not path.exists():
         logger.warning(f"Event policy predictions not found: {path}")
         return pd.DataFrame()
-    
+
     df = pd.read_parquet(path)
     logger.info(f"Loaded event policy predictions: {df.shape}")
     return df
-
-
-# ============================================================================
-# Visualization Functions
-# ============================================================================
 
 def plot_policy_confusion_matrix(confusion_df: pd.DataFrame) -> go.Figure:
     """
@@ -261,16 +229,13 @@ def plot_policy_confusion_matrix(confusion_df: pd.DataFrame) -> go.Figure:
             font=dict(size=14, color="gray")
         )
         return fig
-    
-    # Extract policy names (all columns except policy_true)
+
     policy_cols = [col for col in confusion_df.columns if col != "policy_true"]
-    
-    # Build matrix with policy_true as rows
+
     matrix = confusion_df[policy_cols].values
     y_labels = confusion_df["policy_true"].tolist()
     x_labels = policy_cols
-    
-    # Create annotations with percentages
+
     annotations = []
     for i, y_label in enumerate(y_labels):
         for j, x_label in enumerate(x_labels):
@@ -284,8 +249,7 @@ def plot_policy_confusion_matrix(confusion_df: pd.DataFrame) -> go.Figure:
                     font=dict(color="white" if value > 0.5 else "black", size=12)
                 )
             )
-    
-    # Create heatmap
+
     fig = go.Figure(data=go.Heatmap(
         z=matrix,
         x=x_labels,
@@ -297,7 +261,7 @@ def plot_policy_confusion_matrix(confusion_df: pd.DataFrame) -> go.Figure:
         hovertemplate="Reale: %{y}<br>Predetta: %{x}<br>Tasso: %{z:.2%}<extra></extra>",
         colorbar=dict(title="Tasso", tickformat=".0%")
     ))
-    
+
     fig.update_layout(
         title="Matrice di confusione (normalizzata per riga)",
         xaxis_title="Policy predetta",
@@ -308,9 +272,8 @@ def plot_policy_confusion_matrix(confusion_df: pd.DataFrame) -> go.Figure:
         width=700,
         margin=dict(l=100, r=50, t=80, b=80)
     )
-    
-    return fig
 
+    return fig
 
 def render_uplift_table(metrics_df: pd.DataFrame) -> None:
     """
@@ -322,13 +285,11 @@ def render_uplift_table(metrics_df: pd.DataFrame) -> None:
     if metrics_df.empty:
         st.warning("Nessuna metrica di uplift disponibile.")
         return
-    
+
     st.subheader("Analisi uplift: policy guidata vs baseline FIFO")
-    
-    # Format the table
+
     display_df = metrics_df.copy()
-    
-    # Rename columns for clarity
+
     display_df = display_df.rename(columns={
         "segment_type": "Tipo segmento",
         "segment_value": "Valore segmento",
@@ -338,8 +299,7 @@ def render_uplift_table(metrics_df: pd.DataFrame) -> None:
         "uplift_absolute": "Uplift assoluto",
         "uplift_relative": "Uplift %"
     })
-    
-    # Format numeric columns
+
     if "Recall baseline@k" in display_df.columns:
         display_df["Recall baseline@k"] = display_df["Recall baseline@k"].apply(lambda x: f"{x:.2%}")
     if "Recall policy@k" in display_df.columns:
@@ -348,15 +308,13 @@ def render_uplift_table(metrics_df: pd.DataFrame) -> None:
         display_df["Uplift assoluto"] = display_df["Uplift assoluto"].apply(lambda x: f"{x:+.2%}")
     if "Uplift %" in display_df.columns:
         display_df["Uplift %"] = display_df["Uplift %"].apply(lambda x: f"{x:+.1f}%")
-    
-    # Display table
+
     st.dataframe(
         display_df,
         width="stretch",
         hide_index=True
     )
-    
-    # Summary metrics
+
     if "uplift_relative" in metrics_df.columns:
         global_uplift = metrics_df[metrics_df["segment_type"] == "global"]["uplift_relative"].values
         if len(global_uplift) > 0:
@@ -365,7 +323,6 @@ def render_uplift_table(metrics_df: pd.DataFrame) -> None:
                 f"{global_uplift[0]:+.1f}%",
                 help="Miglioramento relativo rispetto alla policy FIFO"
             )
-
 
 def extract_dominant_policies(
     policy_scores_df: pd.DataFrame,
@@ -385,54 +342,45 @@ def extract_dominant_policies(
     Returns:
         List of dicts with policy info (name, recall, stability, example_event)
     """
-    # Filter for client
     client_scores = policy_scores_df[policy_scores_df["cliente"] == cliente].copy()
     client_preds = predictions_df[predictions_df["event_key"].str.startswith(cliente)].copy()
-    
+
     if client_scores.empty or client_preds.empty:
         return []
-    
-    # Identify policy columns (those starting with "policy_")
+
     policy_cols = [col for col in client_scores.columns if col.startswith("policy_") and col != "policy_true"]
-    
+
     if not policy_cols:
         return []
-    
-    # Calculate mean recall per policy
+
     policy_stats = []
     for policy_col in policy_cols:
         policy_name = policy_col.replace("policy_", "")
-        
-        # Mean recall (from scores)
+
         mean_recall = client_scores[policy_col].mean()
-        
-        # Stability: frequency of this policy being dominant
-        # Find corresponding proba column in predictions
+
         proba_col = f"proba_{policy_name}"
         if proba_col in client_preds.columns:
             stability = (client_preds["policy_pred"] == policy_name).mean()
         else:
             stability = 0.0
-        
-        # Find an example event where this policy was predicted
+
         example_event = None
         if proba_col in client_preds.columns:
             example_rows = client_preds[client_preds["policy_pred"] == policy_name]
             if not example_rows.empty:
                 example_event = example_rows.iloc[0]["event_key"]
-        
+
         policy_stats.append({
             "policy_name": policy_name,
             "mean_recall": mean_recall,
             "stability": stability,
             "example_event": example_event
         })
-    
-    # Sort by mean recall descending
-    policy_stats.sort(key=lambda x: x["mean_recall"], reverse=True)
-    
-    return policy_stats[:top_n]
 
+    policy_stats.sort(key=lambda x: x["mean_recall"], reverse=True)
+
+    return policy_stats[:top_n]
 
 def render_policy_tile(policy_info: Dict, predictions_df: pd.DataFrame) -> None:
     """
@@ -446,8 +394,7 @@ def render_policy_tile(policy_info: Dict, predictions_df: pd.DataFrame) -> None:
     mean_recall = policy_info["mean_recall"]
     stability = policy_info["stability"]
     example_event = policy_info["example_event"]
-    
-    # Define policy rules (human-readable descriptions)
+
     policy_rules = {
         "fifo": "Paga prima le fatture più vecchie (per data documento)",
         "lifo": "Paga prima le fatture più recenti (per data documento)",
@@ -460,10 +407,9 @@ def render_policy_tile(policy_info: Dict, predictions_df: pd.DataFrame) -> None:
         "seqblock": "Paga insieme numeri documento consecutivi",
         "typeprio": "Paga in base alla priorità del tipo documento",
     }
-    
+
     rule_description = policy_rules.get(policy_name, "Policy personalizzata")
-    
-    # Create tile container with styled HTML
+
     tile_html = f"""
     <div style="
         background-color: #FFFFFF;
@@ -481,35 +427,28 @@ def render_policy_tile(policy_info: Dict, predictions_df: pd.DataFrame) -> None:
         </p>
     </div>
     """
-    
+
     st.markdown(tile_html, unsafe_allow_html=True)
-    
-    # Micro-example
+
     if example_event:
         with st.expander(f"📋 Evento di esempio: {example_event}"):
             example_row = predictions_df[predictions_df["event_key"] == example_event]
             if not example_row.empty:
                 row = example_row.iloc[0]
-                
+
                 st.write(f"**Policy predetta:** {row['policy_pred']}")
                 st.write(f"**Policy reale:** {row['policy_true']}")
                 st.write(f"**Accuratezza:** {'✅ Corretta' if row['accuracy'] else '❌ Errata'}")
                 st.write(f"**Recall media:** {row['mean_recall']:.1%}")
-                
-                # Show top-k probabilities
+
                 proba_cols = [col for col in row.index if col.startswith("proba_")]
                 if proba_cols:
                     proba_data = {col.replace("proba_", ""): row[col] for col in proba_cols}
                     proba_sorted = sorted(proba_data.items(), key=lambda x: x[1], reverse=True)[:3]
-                    
+
                     st.write("**Top-3 probabilità policy:**")
                     for policy, proba in proba_sorted:
                         st.write(f"- {policy}: {proba:.1%}")
-
-
-# ============================================================================
-# Main Rendering Function
-# ============================================================================
 
 def render_policy_iq(data_dir: Path, hide_regmonth: bool = False) -> None:
     """
@@ -520,7 +459,7 @@ def render_policy_iq(data_dir: Path, hide_regmonth: bool = False) -> None:
         hide_regmonth: DEPRECATED (PROMPT 6) - replaced by PROMPT 7 policy toggle
     """
     st.title("🎯 Policy IQ — Come pagano i tuoi clienti?")
-    
+
     st.markdown(
         """
         Capire quale **regola di pagamento** usa ogni cliente aiuta a predire quali fatture pagheranno prima:
@@ -529,18 +468,15 @@ def render_policy_iq(data_dir: Path, hide_regmonth: bool = False) -> None:
         - **💡 Spiegazioni Semplici**: Cosa significa ogni regola di pagamento con esempi concreti
         """
     )
-    
- # Policy toggle UI in sidebar
+
     active_policies = _render_policy_toggle_sidebar_iq()
-    
-    # Load data
+
     with st.spinner("Caricamento dati delle policy..."):
         confusion_df = load_policy_confusion_matrix(data_dir)
         metrics_df = load_policy_metrics(data_dir)
         policy_scores_df = load_per_event_policy_scores(data_dir)
         predictions_df = load_event_policy_predictions(data_dir)
-    
- # Filter data based on active_policies (replaces PROMPT 6 hide_regmonth)
+
     if not confusion_df.empty and "true_policy" in confusion_df.columns:
         confusion_df = confusion_df[
             confusion_df["true_policy"].isin(active_policies)
@@ -549,12 +485,11 @@ def render_policy_iq(data_dir: Path, hide_regmonth: bool = False) -> None:
             confusion_df = confusion_df[
                 confusion_df["pred_policy"].isin(active_policies)
             ].copy()
-    
+
     if not metrics_df.empty and "policy" in metrics_df.columns:
         metrics_df = metrics_df[metrics_df["policy"].isin(active_policies)].copy()
-    
+
     if not policy_scores_df.empty:
-        # Filter policy score columns based on active_policies
         policy_score_cols = [c for c in policy_scores_df.columns if c.startswith("policy_")]
         active_policy_cols = [
             c for c in policy_score_cols
@@ -562,19 +497,16 @@ def render_policy_iq(data_dir: Path, hide_regmonth: bool = False) -> None:
         ]
         keep_cols = [c for c in policy_scores_df.columns if not c.startswith("policy_")] + active_policy_cols
         policy_scores_df = policy_scores_df[keep_cols].copy()
-    
+
     if not predictions_df.empty and "pred_policy" in predictions_df.columns:
         predictions_df = predictions_df[
             predictions_df["pred_policy"].isin(active_policies)
         ].copy()
-    
+
     if confusion_df.empty and metrics_df.empty and policy_scores_df.empty:
         st.error("Dati di policy non disponibili. Esegui prima la pipeline di analytics.")
         return
-    
-    # ========================================================================
-    # Section 1: Confusion Matrix (Business-Friendly)
-    # ========================================================================
+
     st.header("🎯 1. Matrice Accuratezza Predizioni")
     st.markdown(
         """
@@ -586,16 +518,15 @@ def render_policy_iq(data_dir: Path, hide_regmonth: bool = False) -> None:
         💡 **Obiettivo**: Diagonale >70% significa modello affidabile.
         """
     )
-    
+
     fig_confusion = plot_policy_confusion_matrix(confusion_df)
     st.plotly_chart(fig_confusion, use_container_width=True)
-    
-    # Accuracy metrics with business-friendly labels
+
     if not metrics_df.empty:
         global_metrics = metrics_df[metrics_df["segment_type"] == "global"]
         if not global_metrics.empty:
             row = global_metrics.iloc[0]
-            
+
             col1, col2, col3 = st.columns(3)
             with col1:
                 if "top1_accuracy" in row:
@@ -621,8 +552,7 @@ def render_policy_iq(data_dir: Path, hide_regmonth: bool = False) -> None:
                         f"{int(row['n_events']):,}",
                         help="Numero totale di pagamenti usati per calcolare la matrice"
                     )
-    
-    # Export confusion matrix CSV
+
     if not confusion_df.empty:
         st.markdown("---")
         csv_bytes = export_dataframe_to_csv(confusion_df)
@@ -633,12 +563,9 @@ def render_policy_iq(data_dir: Path, hide_regmonth: bool = False) -> None:
             mime="text/csv",
             help="Esporta la matrice con percentuali per analisi in Excel"
         )
-    
+
     st.divider()
-    
-    # ========================================================================
-    # Section 2: Uplift Analysis (Business-Friendly + Chart)
-    # ========================================================================
+
     st.header("📈 2. Miglioramento rispetto a FIFO Standard")
     st.markdown(
         """
@@ -654,37 +581,31 @@ def render_policy_iq(data_dir: Path, hide_regmonth: bool = False) -> None:
         - **-5%**: Policy IQ peggiora (raro, indica overfitting)
         """
     )
-    
-    # Render uplift table
+
     render_uplift_table(metrics_df)
-    
-    # Add bar chart for visual comparison
+
     if not metrics_df.empty:
         st.markdown("#### 📊 Confronto Visivo: Baseline vs Policy IQ")
-        
-        # Prepare data for chart
+
         chart_df = metrics_df.copy()
         if "segment_type" in chart_df.columns and "baseline_recall" in chart_df.columns and "predicted_recall" in chart_df.columns:
-            # Focus on meaningful segments (global, k buckets)
             chart_df = chart_df[chart_df["segment_type"].isin(["global", "k_bucket"])].copy()
-            
+
             if not chart_df.empty:
                 import plotly.express as px
-                
-                # Reshape for grouped bar chart
+
                 chart_long = chart_df.melt(
                     id_vars=["segment_value"],
                     value_vars=["baseline_recall", "predicted_recall"],
                     var_name="Strategia",
                     value_name="Recall@k"
                 )
-                
-                # Rename for clarity
+
                 chart_long["Strategia"] = chart_long["Strategia"].map({
                     "baseline_recall": "FIFO Standard",
                     "predicted_recall": "Policy IQ"
                 })
-                
+
                 fig_uplift = px.bar(
                     chart_long,
                     x="segment_value",
@@ -695,13 +616,12 @@ def render_policy_iq(data_dir: Path, hide_regmonth: bool = False) -> None:
                     labels={"segment_value": "Segmento", "Recall@k": "Recall@k (%)"},
                     title="Recall@k per Segmento: FIFO vs Policy IQ"
                 )
-                
+
                 fig_uplift.update_yaxis(tickformat=".1%")
                 fig_uplift.update_layout(height=400)
-                
+
                 st.plotly_chart(fig_uplift, use_container_width=True)
-                
-                # Key insight
+
                 global_row = metrics_df[metrics_df["segment_type"] == "global"]
                 if not global_row.empty and "uplift_relative" in global_row.columns:
                     uplift_val = global_row.iloc[0]["uplift_relative"]
@@ -711,8 +631,7 @@ def render_policy_iq(data_dir: Path, hide_regmonth: bool = False) -> None:
                         st.info(f"💡 **Uplift globale: +{uplift_val:.1f}%** — Policy IQ migliora leggermente, potrebbe non giustificare la complessità.")
                     else:
                         st.warning(f"⚠️ **Uplift globale: {uplift_val:.1f}%** — Policy IQ non migliora rispetto a FIFO. Verifica overfitting.")
-    
-    # Export uplift CSV
+
     if not metrics_df.empty:
         st.markdown("---")
         csv_bytes_uplift = export_dataframe_to_csv(metrics_df)
@@ -723,12 +642,9 @@ def render_policy_iq(data_dir: Path, hide_regmonth: bool = False) -> None:
             mime="text/csv",
             help="Esporta metriche uplift (baseline, predicted, delta) per segmento"
         )
-    
+
     st.divider()
-    
-    # ========================================================================
-    # Section 2.5: Cluster Breakdown (Prompt 12)
-    # ========================================================================
+
     st.header("📊 2.5 Metriche per Cluster (Segmentazione)")
     st.markdown(
         """
@@ -741,20 +657,17 @@ def render_policy_iq(data_dir: Path, hide_regmonth: bool = False) -> None:
         💡 **Utilità**: Scopri se certi cluster hanno pattern più prevedibili (→ targeting campagne DSO).
         """
     )
-    
-    # Load cluster data
+
     cluster_summary_path = data_dir / "curated" / "cluster_summary.parquet"
     client_clusters_path = data_dir / "curated" / "client_clusters.parquet"
-    
+
     if cluster_summary_path.exists() and client_clusters_path.exists():
         cluster_summary_df = pd.read_parquet(cluster_summary_path)
         client_clusters_df = pd.read_parquet(client_clusters_path)
-        
+
         if not cluster_summary_df.empty:
-            # Display summary table
             st.markdown("**📋 Riepilogo Cluster**")
-            
-            # Extract relevant columns
+
             display_cols = []
             if "cluster_label" in cluster_summary_df.columns:
                 display_cols.append("cluster_label")
@@ -768,16 +681,14 @@ def render_policy_iq(data_dir: Path, hide_regmonth: bool = False) -> None:
                 display_cols.append("k_mode")
             if "periodicity" in cluster_summary_df.columns:
                 display_cols.append("periodicity")
-            
+
             if display_cols:
                 cluster_display_df = cluster_summary_df[display_cols].copy()
-                
-                # Rename for business clarity
+
                 cluster_display_df.columns = cluster_display_df.columns.str.replace("_", " ").str.title()
-                
+
                 st.dataframe(cluster_display_df, use_container_width=True, hide_index=True)
-                
-                # Summary metrics
+
                 col1, col2, col3 = st.columns(3)
                 with col1:
                     st.metric("🏷️ Cluster Trovati", f"{len(cluster_summary_df)}")
@@ -788,16 +699,15 @@ def render_policy_iq(data_dir: Path, hide_regmonth: bool = False) -> None:
                     if "n_clienti" in cluster_summary_df.columns:
                         avg_cluster_size = cluster_summary_df["n_clienti"].mean()
                         st.metric("📊 Dimensione Media Cluster", f"{avg_cluster_size:.0f}")
-                
-                # Bar chart: Dominant policy distribution per cluster
+
                 if "dominant_policy" in cluster_summary_df.columns and "cluster_label" in cluster_summary_df.columns:
                     st.markdown("**📊 Policy Dominante per Cluster**")
-                    
+
                     import plotly.express as px
-                    
+
                     policy_cluster_df = cluster_summary_df[["cluster_label", "dominant_policy"]].copy()
-                    policy_cluster_df["count"] = 1  # For aggregation
-                    
+                    policy_cluster_df["count"] = 1
+
                     fig_cluster_policy = px.bar(
                         policy_cluster_df,
                         x="cluster_label",
@@ -807,11 +717,10 @@ def render_policy_iq(data_dir: Path, hide_regmonth: bool = False) -> None:
                         title="Distribuzione Policy Dominante per Cluster",
                         color_discrete_sequence=px.colors.qualitative.Set3
                     )
-                    
+
                     fig_cluster_policy.update_layout(height=350)
                     st.plotly_chart(fig_cluster_policy, use_container_width=True)
-                
-                # Export cluster summary CSV
+
                 st.markdown("---")
                 csv_bytes_cluster = export_dataframe_to_csv(cluster_summary_df)
                 st.download_button(
@@ -827,12 +736,9 @@ def render_policy_iq(data_dir: Path, hide_regmonth: bool = False) -> None:
             st.info("📊 Cluster summary vuoto. Esegui HDBSCAN clustering (Prompt 4-5) per generare segmentazione.")
     else:
         st.info("📊 Cluster data non disponibili. Esegui clustering (Prompt 4: `python src/analytics/run_hdbscan.py`) e pattern detection (Prompt 5: `python src/analytics/make_pattern_table.py`) per vedere breakdown per cluster.")
-    
+
     st.divider()
-    
-    # ========================================================================
-    # Section 3: Explain Tiles (Business-Friendly Policy Explanations)
-    # ========================================================================
+
     st.header("💡 3. Cosa Significa Ogni Regola di Pagamento?")
     st.markdown(
         """
@@ -845,45 +751,40 @@ def render_policy_iq(data_dir: Path, hide_regmonth: bool = False) -> None:
         - 🔬 **Dettagli tecnici**: Formula esatta (per sviluppatori)
         """
     )
-    
-    # Tab view for better organization
+
     explain_tabs = st.tabs([
         "📋 Tutte le Regole",
         "🔍 Per Cliente Specifico"
     ])
-    
-    # Tab 1: All policies explained
+
     with explain_tabs[0]:
         st.markdown("### 📚 Dizionario Completo delle Regole")
-        
-        # Group policies by category
+
         st.markdown("#### 🕐 Regole Temporali")
         temporal_policies = ["fifo", "lifo", "same_period", "eomfirst", "quarter", "seqblock", "regmonth"]
         for policy in temporal_policies:
             if policy in active_policies:
                 render_policy_explain_tile(policy)
-        
+
         st.markdown("#### 💰 Regole Basate su Importo")
         amount_policies = ["largest", "smallest"]
         for policy in amount_policies:
             if policy in active_policies:
                 render_policy_explain_tile(policy)
-        
+
         st.markdown("#### 📋 Regole Basate su Tipo Documento")
         type_policies = ["typeprio"]
         for policy in type_policies:
             if policy in active_policies:
                 render_policy_explain_tile(policy)
-    
-    # Tab 2: Client-specific dominant policies
+
     with explain_tabs[1]:
         st.markdown("### 🎯 Policy Dominanti per Cliente")
         st.markdown("Seleziona un cliente per vedere le sue 3 regole più frequenti con esempi dai suoi dati reali.")
-        
-        # Client selector
+
         if not policy_scores_df.empty:
             available_clients = sorted(policy_scores_df["cliente"].unique())
-            
+
             if available_clients:
                 selected_client_tile = st.selectbox(
                     "Seleziona cliente",
@@ -891,18 +792,17 @@ def render_policy_iq(data_dir: Path, hide_regmonth: bool = False) -> None:
                     index=0,
                     key="policy_iq_client_selector"
                 )
-                
-                # Extract dominant policies
+
                 dominant_policies = extract_dominant_policies(
                     policy_scores_df,
                     predictions_df,
                     str(selected_client_tile),
                     top_n=3
                 )
-                
+
                 if dominant_policies:
                     st.markdown(f"#### Top 3 regole per **{selected_client_tile}**:")
-                    
+
                     for policy_info in dominant_policies:
                         render_policy_tile(policy_info, predictions_df)
                 else:
@@ -911,20 +811,16 @@ def render_policy_iq(data_dir: Path, hide_regmonth: bool = False) -> None:
                 st.warning("Nessun cliente trovato nei punteggi policy.")
         else:
             st.warning("Punteggi policy non disponibili.")
-    
-    # ========================================================================
-    # Footer: Deep-link for Audit
-    # ========================================================================
+
     st.divider()
     st.markdown("### � Condividi Analisi")
-    
-    # Deep-link
+
     client_filter = ""
     if not policy_scores_df.empty:
         available_clients = sorted(policy_scores_df["cliente"].unique())
         if available_clients:
-            client_filter = str(available_clients[0])  # Default to first client
-    
+            client_filter = str(available_clients[0])
+
     deeplink_url = generate_deeplink(
         page="Policy IQ",
         filters={"selected_client": client_filter},
@@ -932,8 +828,8 @@ def render_policy_iq(data_dir: Path, hide_regmonth: bool = False) -> None:
     if st.button("📋 Genera Deep-Link", key="deeplink_policyiq"):
         st.code(deeplink_url, language=None)
         st.caption("⚠️ Copia manualmente l'URL sopra per condividere questa vista con colleghi.")
-    
-    # Footer
+
     st.divider()
     st.caption("🎯 Policy IQ | Dati: event_policy_metrics, per_event_policy_scores, event_policy_predictions")
     st.caption("📥 CSV export disponibili in ogni sezione | 🔗 Deep-link mantiene filtri attivi")
+

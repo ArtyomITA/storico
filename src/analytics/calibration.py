@@ -22,8 +22,7 @@ CALIBRATION_BINS_PATH = CURATED_DIR / "calibration_bins.parquet"
 
 N_BINS = 20
 TRAIN_FRACTION = 0.7
-TOP_CLIENT_THRESHOLD = 10  # Number of top-volume clients to analyze separately
-
+TOP_CLIENT_THRESHOLD = 10
 
 @dataclass
 class CalibrationMetrics:
@@ -37,11 +36,9 @@ class CalibrationMetrics:
     ece: float
     mce: float
 
-
 def configure_logging(level: int | str | None = logging.INFO) -> Path:
     """Configure shared logging handlers for CLI execution."""
     return setup_logging(level)
-
 
 def load_test_data(project_root: Path) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """Load test split features and events for calibration evaluation."""
@@ -57,7 +54,6 @@ def load_test_data(project_root: Path) -> Tuple[pd.DataFrame, pd.DataFrame]:
     features = pd.read_parquet(features_path)
     events = pd.read_parquet(events_path)
 
-    # Perform temporal split to isolate test set (70/30 split)
     event_dates = events[["event_key", "data_pareggio"]].dropna().copy()
     event_dates["data_pareggio"] = pd.to_datetime(event_dates["data_pareggio"], errors="coerce")
     event_dates = event_dates.dropna(subset=["data_pareggio"])
@@ -75,7 +71,6 @@ def load_test_data(project_root: Path) -> Tuple[pd.DataFrame, pd.DataFrame]:
 
     LOGGER.info("Loaded %d test samples from %d total features", len(test_df), len(features))
     return test_df, events
-
 
 def load_model_predictions(
     test_df: pd.DataFrame, model_name: str, project_root: Path
@@ -104,7 +99,6 @@ def load_model_predictions(
             model = CatBoostClassifier()
             model.load_model(str(model_path))
 
-            # Select features matching training schema - must match exact column order
             drop_cols = ["label", "data_pareggio", "cliente", "event_key", "numero_documento"]
             feature_df = test_df.drop(columns=[col for col in drop_cols if col in test_df.columns], errors='ignore')
 
@@ -115,7 +109,6 @@ def load_model_predictions(
             ]
             cat_indices = [feature_df.columns.get_loc(col) for col in categorical_cols if col in feature_df.columns]
 
-            # Ensure feature order matches model expectations
             feature_names = model.feature_names_
             if feature_names:
                 missing_features = set(feature_names) - set(feature_df.columns)
@@ -125,7 +118,6 @@ def load_model_predictions(
                         model_name,
                         missing_features,
                     )
-                    # Fallback: use simple heuristic based on age_days
                     result = test_df[["cliente", "event_key", "numero_documento", "label"]].copy()
                     if "age_days" in test_df.columns:
                         result["prob"] = test_df["age_days"].fillna(0).clip(0, 365) / 365.0
@@ -133,13 +125,11 @@ def load_model_predictions(
                         result["prob"] = np.random.rand(len(result))
                     LOGGER.info("Using fallback heuristic predictions for %d test samples", len(result))
                     return result
-                # Reorder columns to match training
                 feature_df = feature_df[feature_names]
 
             pool = Pool(data=feature_df, cat_features=cat_indices if cat_indices else None)
             probs = model.predict_proba(pool)[:, 1]
 
-            # Apply calibrator if available
             if calibrator_path.exists():
                 with open(calibrator_path, "rb") as f:
                     calibrator = pickle.load(f)
@@ -154,7 +144,6 @@ def load_model_predictions(
             return result
 
         elif model_name == "autogluon":
-            # Placeholder for AutoGluon loading (would require AutoGluon imports)
             LOGGER.info("AutoGluon loading not implemented; skipping.")
             return None
 
@@ -162,25 +151,21 @@ def load_model_predictions(
         LOGGER.warning("Failed to load %s model: %s", model_name, exc)
         return None
 
-
 def compute_brier_score(y_true: np.ndarray, y_prob: np.ndarray) -> float:
     """Compute Brier score: mean squared error of probabilistic predictions."""
     if len(y_true) == 0:
         return 0.0
     return float(np.mean((y_prob - y_true) ** 2))
 
-
 def compute_ece(y_true: np.ndarray, y_prob: np.ndarray, n_bins: int = 10) -> float:
     """Compute Expected Calibration Error (ECE) using equal-populated bins."""
     if len(y_true) == 0:
         return 0.0
 
-    # Sort by predicted probability
     sort_idx = np.argsort(y_prob)
     y_true_sorted = y_true[sort_idx]
     y_prob_sorted = y_prob[sort_idx]
 
-    # Create equal-populated bins
     bin_size = len(y_true) // n_bins
     if bin_size == 0:
         return 0.0
@@ -204,18 +189,15 @@ def compute_ece(y_true: np.ndarray, y_prob: np.ndarray, n_bins: int = 10) -> flo
 
     return float(ece)
 
-
 def compute_mce(y_true: np.ndarray, y_prob: np.ndarray, n_bins: int = 10) -> float:
     """Compute Maximum Calibration Error (MCE): worst-case calibration gap."""
     if len(y_true) == 0:
         return 0.0
 
-    # Sort by predicted probability
     sort_idx = np.argsort(y_prob)
     y_true_sorted = y_true[sort_idx]
     y_prob_sorted = y_prob[sort_idx]
 
-    # Create equal-populated bins
     bin_size = len(y_true) // n_bins
     if bin_size == 0:
         return 0.0
@@ -239,7 +221,6 @@ def compute_mce(y_true: np.ndarray, y_prob: np.ndarray, n_bins: int = 10) -> flo
 
     return float(max_error)
 
-
 def build_reliability_bins(
     y_true: np.ndarray, y_prob: np.ndarray, n_bins: int = N_BINS
 ) -> pd.DataFrame:
@@ -247,12 +228,10 @@ def build_reliability_bins(
     if len(y_true) == 0:
         return pd.DataFrame(columns=["bin_id", "pred_mean", "obs_rate", "n_samples"])
 
-    # Sort by predicted probability
     sort_idx = np.argsort(y_prob)
     y_true_sorted = y_true[sort_idx]
     y_prob_sorted = y_prob[sort_idx]
 
-    # Create equal-populated bins
     bin_size = len(y_true) // n_bins
     if bin_size == 0:
         bin_size = 1
@@ -279,7 +258,6 @@ def build_reliability_bins(
 
     return pd.DataFrame(rows)
 
-
 def compute_calibration_metrics(
     predictions: pd.DataFrame,
     model_name: str,
@@ -304,10 +282,8 @@ def compute_calibration_metrics(
         mce=mce,
     )
 
-
 def segment_by_cardinality(predictions: pd.DataFrame, events: pd.DataFrame) -> Dict[str, pd.DataFrame]:
     """Segment predictions by event cardinality buckets."""
-    # Compute cardinality per event
     event_card = predictions.groupby("event_key")["label"].sum().reset_index()
     event_card.columns = ["event_key", "cardinality"]
 
@@ -322,12 +298,10 @@ def segment_by_cardinality(predictions: pd.DataFrame, events: pd.DataFrame) -> D
 
     return segments
 
-
 def get_top_volume_clients(predictions: pd.DataFrame, top_n: int = TOP_CLIENT_THRESHOLD) -> List[str]:
     """Identify top-N clients by volume (number of test samples)."""
     client_counts = predictions["cliente"].value_counts().head(top_n)
     return client_counts.index.tolist()
-
 
 def evaluate_calibration(
     predictions: pd.DataFrame, events: pd.DataFrame, model_name: str
@@ -336,7 +310,6 @@ def evaluate_calibration(
     metrics_list: List[CalibrationMetrics] = []
     bins_list: List[pd.DataFrame] = []
 
-    # Global metrics
     global_metrics = compute_calibration_metrics(predictions, model_name, "global", "all")
     metrics_list.append(global_metrics)
 
@@ -346,7 +319,6 @@ def evaluate_calibration(
     global_bins["segment_value"] = "all"
     bins_list.append(global_bins)
 
-    # Cardinality segments
     card_segments = segment_by_cardinality(predictions, events)
     for bucket_name, bucket_df in card_segments.items():
         if bucket_df.empty:
@@ -360,11 +332,10 @@ def evaluate_calibration(
         bucket_bins["segment_value"] = bucket_name
         bins_list.append(bucket_bins)
 
-    # Top-volume clients
     top_clients = get_top_volume_clients(predictions)
     for cliente in top_clients:
         client_df = predictions[predictions["cliente"] == cliente]
-        if client_df.empty or len(client_df) < 10:  # Skip clients with too few samples
+        if client_df.empty or len(client_df) < 10:
             continue
         client_metrics = compute_calibration_metrics(client_df, model_name, "cliente", cliente)
         metrics_list.append(client_metrics)
@@ -378,12 +349,10 @@ def evaluate_calibration(
     bins_df = pd.concat(bins_list, ignore_index=True) if bins_list else pd.DataFrame()
     return metrics_list, bins_df
 
-
 def print_summary(metrics_list: List[CalibrationMetrics]) -> None:
     """Print console summary of calibration metrics."""
     LOGGER.info("=== Calibration Diagnostics Summary ===")
 
-    # Global metrics
     global_metrics = [m for m in metrics_list if m.segment_type == "global"]
     for m in global_metrics:
         LOGGER.info(
@@ -395,7 +364,6 @@ def print_summary(metrics_list: List[CalibrationMetrics]) -> None:
             m.n_samples,
         )
 
-    # Cardinality buckets
     bucket_metrics = [m for m in metrics_list if m.segment_type == "cardinality_bucket"]
     if bucket_metrics:
         LOGGER.info("=== Cardinality Bucket Metrics ===")
@@ -410,7 +378,6 @@ def print_summary(metrics_list: List[CalibrationMetrics]) -> None:
                 m.mce,
             )
 
-    # Top clients
     client_metrics = [m for m in metrics_list if m.segment_type == "cliente"]
     if client_metrics:
         LOGGER.info("=== Top Client Metrics (by Brier score) ===")
@@ -425,7 +392,6 @@ def print_summary(metrics_list: List[CalibrationMetrics]) -> None:
                 m.ece,
             )
 
-
 def save_outputs(
     metrics_list: List[CalibrationMetrics], bins_df: pd.DataFrame, project_root: Path
 ) -> Tuple[Path, Path]:
@@ -433,7 +399,6 @@ def save_outputs(
     curated_dir = project_root / "data" / "curated"
     curated_dir.mkdir(parents=True, exist_ok=True)
 
-    # Convert metrics to DataFrame
     metrics_records = [
         {
             "model": m.model_name,
@@ -458,7 +423,6 @@ def save_outputs(
     LOGGER.info("Saved reliability bins to %s", bins_path)
     return summary_path, bins_path
 
-
 def main() -> None:
     """Main entry point for calibration diagnostics."""
     configure_logging()
@@ -470,7 +434,6 @@ def main() -> None:
     all_metrics: List[CalibrationMetrics] = []
     all_bins: List[pd.DataFrame] = []
 
-    # Evaluate CatBoost (Model A)
     LOGGER.info("Evaluating CatBoost calibration...")
     catboost_preds = load_model_predictions(test_df, "catboost", project_root)
     if catboost_preds is not None:
@@ -478,7 +441,6 @@ def main() -> None:
         all_metrics.extend(catboost_metrics)
         all_bins.append(catboost_bins)
 
-    # Evaluate AutoGluon (Model B) - optional
     LOGGER.info("Evaluating AutoGluon calibration...")
     autogluon_preds = load_model_predictions(test_df, "autogluon", project_root)
     if autogluon_preds is not None:
@@ -490,7 +452,6 @@ def main() -> None:
         LOGGER.warning("No calibration metrics computed; no models available.")
         return
 
-    # Combine bins
     combined_bins = pd.concat(all_bins, ignore_index=True) if all_bins else pd.DataFrame()
 
     print_summary(all_metrics)
@@ -498,6 +459,6 @@ def main() -> None:
 
     LOGGER.info("Calibration diagnostics complete.")
 
-
-if __name__ == "__main__":  # pragma: no cover
+if __name__ == "__main__":
     main()
+

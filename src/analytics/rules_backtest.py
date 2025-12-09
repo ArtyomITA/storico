@@ -18,7 +18,6 @@ CURATED_DIR = Path("data/curated")
 OUTPUT_FILENAME = "client_rules_accuracy.parquet"
 TEST_FRACTION = 0.2
 
-
 @dataclass(frozen=True)
 class EventEvaluation:
     cliente: str
@@ -27,12 +26,10 @@ class EventEvaluation:
     recall: float
     match_rate: float
 
-
 def configure_logging(level: int | str | None = logging.INFO) -> Path:
     """Configure shared logging handlers when invoked as CLI."""
 
     return setup_logging(level)
-
 
 def load_curated_tables(project_root: Path) -> Dict[str, pd.DataFrame]:
     curated_dir = project_root / CURATED_DIR
@@ -48,7 +45,6 @@ def load_curated_tables(project_root: Path) -> Dict[str, pd.DataFrame]:
         LOGGER.info("Loading %s from %s", name, path)
         tables[name] = pd.read_parquet(path)
     return tables
-
 
 def prepare_document_pool(event_items: pd.DataFrame) -> pd.DataFrame:
     """Prepare document-level dataset with derived attributes."""
@@ -69,7 +65,6 @@ def prepare_document_pool(event_items: pd.DataFrame) -> pd.DataFrame:
     else:
         docs["periodo_num"] = np.nan
     return docs
-
 
 def dominant_policy_map(pattern_scores: pd.DataFrame) -> Dict[str, str]:
     """Return mapping cliente -> dominant policy based on highest score."""
@@ -92,7 +87,6 @@ def dominant_policy_map(pattern_scores: pd.DataFrame) -> Dict[str, str]:
             records[cliente] = best_policy
     return records
 
-
 def split_holdout_events(events: pd.DataFrame) -> Dict[str, pd.DataFrame]:
     """Select the most recent TEST_FRACTION events per client as hold-out set."""
     holdout: Dict[str, pd.DataFrame] = {}
@@ -109,7 +103,6 @@ def split_holdout_events(events: pd.DataFrame) -> Dict[str, pd.DataFrame]:
         n_test = max(1, math.ceil(n_events * TEST_FRACTION))
         holdout[str(cliente)] = group_sorted.tail(n_test)
     return holdout
-
 
 def _rank_candidates_for_policy(policy: str, candidates: pd.DataFrame) -> pd.DataFrame:
     """Return candidate documents ordered according to the specified policy."""
@@ -135,7 +128,6 @@ def _rank_candidates_for_policy(policy: str, candidates: pd.DataFrame) -> pd.Dat
         raise ValueError(f"Unknown policy: {policy}")
 
     return candidates.sort_values(order_cols, ascending=ascending)
-
 
 def evaluate_event(
     policy: str,
@@ -195,7 +187,6 @@ def evaluate_event(
         recall=recall,
         match_rate=match_rate,
     )
-
 
 def compute_rules_accuracy(tables: Dict[str, pd.DataFrame]) -> pd.DataFrame:
     events = tables["events"]
@@ -258,7 +249,6 @@ def compute_rules_accuracy(tables: Dict[str, pd.DataFrame]) -> pd.DataFrame:
     columns = ["cliente", "policy_dom", "rules_recall_at_k", "rules_match_rate", "events_tested"]
     return pd.DataFrame(client_records, columns=columns)
 
-
 def save_results(df: pd.DataFrame, project_root: Path) -> Path:
     curated_dir = project_root / CURATED_DIR
     curated_dir.mkdir(parents=True, exist_ok=True)
@@ -266,7 +256,6 @@ def save_results(df: pd.DataFrame, project_root: Path) -> Path:
     df.to_parquet(output_path, compression="snappy", index=False)
     LOGGER.info("Saved %s rows to %s", len(df), output_path)
     return output_path
-
 
 def evaluate_holdout_accuracy(cliente: str) -> Optional[float]:
     """Compute hold-out accuracy for a specific client and return recall@k."""
@@ -281,7 +270,6 @@ def evaluate_holdout_accuracy(cliente: str) -> Optional[float]:
         return None
     return float(row.iloc[0]["rules_recall_at_k"])
 
-
 def main() -> None:
     configure_logging()
     project_root = Path(__file__).resolve().parents[2]
@@ -293,6 +281,6 @@ def main() -> None:
     save_results(df, project_root)
     print(df.head(3).to_string(index=False))
 
-
-if __name__ == "__main__":  # pragma: no cover
+if __name__ == "__main__":
     main()
+

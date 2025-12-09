@@ -29,10 +29,8 @@ CATBOOST_MODEL_PATH = MODELS_DIR / "catboost.cbm"
 CALIBRATOR_PATH = MODELS_DIR / "calibrator.pkl"
 AUTOGLUON_DIR = MODELS_DIR / "autogluon"
 
-
 def configure_logging(level: int | str | None = logging.INFO) -> Path:
     return setup_logging(level)
-
 
 def compute_acf(values: np.ndarray, max_lag: int = 10) -> Tuple[np.ndarray, np.ndarray]:
     if values.size < 2:
@@ -51,7 +49,6 @@ def compute_acf(values: np.ndarray, max_lag: int = 10) -> Tuple[np.ndarray, np.n
         lags.append(lag)
         coeffs.append(corr)
     return np.asarray(lags), np.asarray(coeffs)
-
 
 def plot_histogram_with_markers(values: Iterable[float], title: str) -> go.Figure:
     value_list = list(values)
@@ -85,7 +82,6 @@ def plot_histogram_with_markers(values: Iterable[float], title: str) -> go.Figur
     )
     return fig
 
-
 def plot_acf(values: np.ndarray) -> go.Figure:
     lags, coeffs = compute_acf(values)
     fig = go.Figure()
@@ -99,7 +95,6 @@ def plot_acf(values: np.ndarray) -> go.Figure:
         margin=dict(l=20, r=20, t=40, b=20),
     )
     return fig
-
 
 def plot_calendar_heatmap(events: pd.DataFrame) -> go.Figure:
     if events.empty:
@@ -129,7 +124,6 @@ def plot_calendar_heatmap(events: pd.DataFrame) -> go.Figure:
     heat.update_layout(margin=dict(l=40, r=40, t=40, b=40), title="Frequenza eventi per giorno")
     return heat
 
-
 def plot_policy_bars(scores: pd.Series) -> go.Figure:
     values = [float(scores.get(f"{policy}_score", 0.0)) for policy in POLICY_NAMES]
     fig = go.Figure(
@@ -145,7 +139,6 @@ def plot_policy_bars(scores: pd.Series) -> go.Figure:
         margin=dict(l=20, r=20, t=40, b=20),
     )
     return fig
-
 
 def plot_cardinality_histogram(events: pd.DataFrame) -> go.Figure:
     if events.empty:
@@ -165,7 +158,6 @@ def plot_cardinality_histogram(events: pd.DataFrame) -> go.Figure:
         margin=dict(l=20, r=20, t=40, b=20),
     )
     return fig
-
 
 def derive_macro_tipo(items: pd.DataFrame) -> pd.Series:
     if "macro_tipo" in items.columns:
@@ -216,7 +208,6 @@ def enrich_features_for_models(
         df["same_period"] = 0.0
     return df
 
-
 def select_catboost_features(df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.Series, List[str], List[int]]:
     target = df["label"].astype(int) if "label" in df.columns else pd.Series(dtype=int)
     drop_cols = ["label", "data_pareggio", "cliente", "event_key", "numero_documento"]
@@ -230,13 +221,11 @@ def select_catboost_features(df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.Series,
     cat_indices = [int(idx) for idx in cat_indices_array if idx >= 0]
     return feature_df, target, list(feature_df.columns), cat_indices
 
-
 def select_autogluon_features(df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.Series, List[str]]:
     target = df["label"].astype(int) if "label" in df.columns else pd.Series(dtype=int)
     drop_cols = ["label", "data_pareggio", "cliente", "event_key", "numero_documento"]
     feature_df = df.drop(columns=[col for col in drop_cols if col in df.columns])
     return feature_df, target, list(feature_df.columns)
-
 
 def load_feature_repository() -> Tuple[pd.DataFrame, List[str], List[int], List[str]]:
     features_path = CURATED_DIR / "train_features.parquet"
@@ -254,10 +243,9 @@ def load_feature_repository() -> Tuple[pd.DataFrame, List[str], List[int], List[
     col_intersection = list(cat_matrix.columns)
     return enriched, col_intersection, cat_indices, auto_feature_cols
 
-
 def load_catboost_bundle() -> Tuple[Optional[Any], Optional[Any]]:
     try:
-        from catboost import CatBoostClassifier  # type: ignore
+        from catboost import CatBoostClassifier
     except ImportError:
         LOGGER.info("CatBoost non disponibile per il report.")
         return None, None
@@ -271,15 +259,14 @@ def load_catboost_bundle() -> Tuple[Optional[Any], Optional[Any]]:
         try:
             with open(CALIBRATOR_PATH, "rb") as f:
                 calibrator = pickle.load(f)
-        except Exception as exc:  # pragma: no cover
+        except Exception as exc:
             LOGGER.warning("Impossibile caricare il calibratore: %s", exc)
             calibrator = None
     return model, calibrator
 
-
 def load_autogluon_predictor() -> Optional[Any]:
     try:
-        from autogluon.tabular import TabularPredictor  # type: ignore
+        from autogluon.tabular import TabularPredictor
     except ImportError:
         LOGGER.info("AutoGluon non disponibile per il report.")
         return None
@@ -287,7 +274,6 @@ def load_autogluon_predictor() -> Optional[Any]:
         LOGGER.info("Directory AutoGluon non trovata in %s", AUTOGLUON_DIR)
         return None
     return TabularPredictor.load(str(AUTOGLUON_DIR))
-
 
 def safe_calibrate(calibrator: Optional[Any], values: np.ndarray) -> np.ndarray:
     if calibrator is None:
@@ -297,7 +283,6 @@ def safe_calibrate(calibrator: Optional[Any], values: np.ndarray) -> np.ndarray:
     except Exception:
         LOGGER.warning("Calibratore non applicabile; uso probabilità grezze.")
         return values
-
 
 def recommend_policy_docs(event_df: pd.DataFrame, policy: Optional[str], k: int) -> List[str]:
     if event_df.empty or not policy:
@@ -324,7 +309,6 @@ def recommend_policy_docs(event_df: pd.DataFrame, policy: Optional[str], k: int)
     top = ordered.head(max(k, 1))["numero_documento"].astype(str)
     return top.tolist()
 
-
 def top_docs_from_catboost(
     event_df: pd.DataFrame,
     feature_columns: Sequence[str],
@@ -335,7 +319,7 @@ def top_docs_from_catboost(
     shap_top_docs: int = 2,
     shap_top_features: int = 3,
 ) -> Tuple[List[str], Dict[str, List[Dict[str, Any]]]]:
-    from catboost import Pool  # type: ignore
+    from catboost import Pool
 
     if model is None or event_df.empty:
         return [], {}
@@ -373,7 +357,6 @@ def top_docs_from_catboost(
     except Exception:
         return docs, {}
 
-
 def top_docs_from_autogluon(
     event_df: pd.DataFrame,
     feature_columns: Sequence[str],
@@ -389,11 +372,10 @@ def top_docs_from_autogluon(
             probs = proba[1].to_numpy()
         else:
             probs = proba.iloc[:, -1].to_numpy()
-    else:  # pragma: no cover
+    else:
         probs = np.asarray(proba)
     ranked = event_df.assign(model_prob=probs).sort_values("model_prob", ascending=False)
     return ranked.head(max(k, 1))["numero_documento"].astype(str).tolist()
-
 
 def build_event_comparison_table(
     actual_docs: List[str],
@@ -410,14 +392,12 @@ def build_event_comparison_table(
     }
     return pd.DataFrame(data)
 
-
 def _extract_threshold_hint(feature_name: str) -> Optional[str]:
     pattern = re.compile(r"(-?\d+(?:\.\d+)?)")
     match = pattern.search(feature_name)
     if match:
         return match.group(1)
     return None
-
 
 def _format_feature_value(value: Any) -> str:
     if value is None or (isinstance(value, float) and np.isnan(value)):
@@ -427,7 +407,6 @@ def _format_feature_value(value: Any) -> str:
     if isinstance(value, (float, np.floating)):
         return f"{float(value):.3f}"
     return str(value)
-
 
 def _format_shap_details(entries: Sequence[Dict[str, Any]]) -> str:
     if not entries:
@@ -452,13 +431,11 @@ def _format_shap_details(entries: Sequence[Dict[str, Any]]) -> str:
         )
     return "<ul class=\"shap-list\">" + "".join(items) + "</ul>"
 
-
 def _build_highlighted_row(doc: str, actual_set: set[str]) -> str:
     if not doc:
         return "<td class=\"cell-empty\"></td>"
     cls = "match-cell" if doc in actual_set else "mismatch-cell"
     return f"<td class=\"{cls}\">{html.escape(doc)}</td>"
-
 
 def build_highlighted_comparison_html(
     actual_docs: Sequence[str],
@@ -494,7 +471,6 @@ def build_highlighted_comparison_html(
     )
     body_html = "<tbody>" + "".join(rows) + "</tbody>"
     return "<table class=\"explain-table\">" + header_html + body_html + "</table>"
-
 
 def build_explainability_cards(
     client_events: pd.DataFrame,
@@ -609,7 +585,6 @@ def build_explainability_cards(
 
     return cards
 
-
 def figure_to_html(fig: go.Figure, include_plotlyjs: bool = False) -> str:
     return to_html(
         fig,
@@ -617,7 +592,6 @@ def figure_to_html(fig: go.Figure, include_plotlyjs: bool = False) -> str:
         full_html=False,
         default_height="420px",
     )
-
 
 def format_percentage(value: Optional[float]) -> str:
     if value is None or (isinstance(value, float) and np.isnan(value)):
@@ -627,7 +601,6 @@ def format_percentage(value: Optional[float]) -> str:
     except (TypeError, ValueError):
         return "n.d."
 
-
 def format_decimal(value: Optional[float], digits: int = 2) -> str:
     if value is None or (isinstance(value, float) and np.isnan(value)):
         return "n.d."
@@ -635,7 +608,6 @@ def format_decimal(value: Optional[float], digits: int = 2) -> str:
         return f"{float(value):.{digits}f}"
     except (TypeError, ValueError):
         return "n.d."
-
 
 def load_curated_tables() -> Dict[str, pd.DataFrame]:
     filenames = {
@@ -657,7 +629,6 @@ def load_curated_tables() -> Dict[str, pd.DataFrame]:
             LOGGER.warning("File %s non trovato", path)
             tables[key] = pd.DataFrame()
     return tables
-
 
 def render_client_report(
     cliente: str,
@@ -970,14 +941,12 @@ h2 {{ margin-top: 0; }}
 """
     return html
 
-
 def save_report(cliente: str, html: str) -> Path:
     REPORTS_DIR.mkdir(parents=True, exist_ok=True)
     output_path = REPORTS_DIR / f"{cliente}.html"
     output_path.write_text(html, encoding="utf-8")
     LOGGER.info("Salvato report per %s in %s", cliente, output_path)
     return output_path
-
 
 def generate_reports(clients: Optional[List[str]] = None) -> List[Path]:
     tables = load_curated_tables()
@@ -1012,7 +981,6 @@ def generate_reports(clients: Optional[List[str]] = None) -> List[Path]:
         output_paths.append(save_report(cliente, html))
     return output_paths
 
-
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Generate HTML pattern reports per client")
     parser.add_argument(
@@ -1022,12 +990,11 @@ def parse_args() -> argparse.Namespace:
     )
     return parser.parse_args()
 
-
 def main() -> None:
     configure_logging()
     args = parse_args()
     generate_reports(args.clients)
 
-
-if __name__ == "__main__":  # pragma: no cover
+if __name__ == "__main__":
     main()
+

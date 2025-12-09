@@ -17,8 +17,6 @@ from src.utils.logging_setup import configure_logging as setup_logging
 
 LOGGER = logging.getLogger(__name__)
 
-# Extended column mapping: Italian headers → snake_case normalized names
-# Includes all SAP FI-AR columns specification
 COL_MAP = {
     "Società": "societa",
     "Cliente": "cliente",
@@ -41,7 +39,6 @@ COL_MAP = {
     "Cond. pagamento": "cond_pagamento",
 }
 
-# Backward compatibility: original minimal column set
 RAW_COLUMNS: List[str] = [
     "Cliente",
     "Data di pareggio",
@@ -58,7 +55,6 @@ RAW_COLUMNS: List[str] = [
     "Chiave contabile",
 ]
 
-# Legacy rename map (deprecated, use COL_MAP instead)
 RENAME_MAP = {
     "Cliente": "cliente",
     "Data di pareggio": "data_pareggio",
@@ -83,12 +79,11 @@ DATE_COLUMNS = [
     "data_base_pagamento",
 ]
 
-AMOUNT_COLUMNS = ["imp_div_int", "importo_raw"]  # Primary + fallback
+AMOUNT_COLUMNS = ["imp_div_int", "importo_raw"]
 
 SUPPORTED_EXTENSIONS = {".csv", ".xlsx"}
 
 _NULL_TOKENS = {"", "nan", "NaN", "None", "<NA>", "NaT"}
-
 
 def _clean_string_series(series: pd.Series) -> pd.Series:
     """Normalise textual columns by trimming and dropping placeholder tokens.
@@ -99,11 +94,8 @@ def _clean_string_series(series: pd.Series) -> pd.Series:
     """
     cleaned = series.astype("string").str.strip()
     cleaned = cleaned.replace({token: pd.NA for token in _NULL_TOKENS})
-    # Remove .0 suffix from document numbers 
-    # Pattern handles both pure numbers (123.0) and alphanumeric IDs (INV123.0)
     cleaned = cleaned.str.replace(r"(\.0+)$", "", regex=True)
     return cleaned
-
 
 def _parse_datetime_series(series: pd.Series) -> pd.Series:
     """Parse heterogeneous date representations into timezone-naive datetimes.
@@ -116,16 +108,13 @@ def _parse_datetime_series(series: pd.Series) -> pd.Series:
     PROMPT 1 requirement: parse dates day-first (dayfirst=True).
     """
     cleaned = _clean_string_series(series)
-    # Primary: Italian day-first format (DD/MM/YYYY)
     parsed = pd.to_datetime(cleaned, format="%d/%m/%Y", errors="coerce", dayfirst=True)
 
-    # Fallback: infer format with dayfirst=True for remaining values
     remaining_mask = parsed.isna() & cleaned.notna()
     if remaining_mask.any():
         fallback = pd.to_datetime(cleaned[remaining_mask], errors="coerce", dayfirst=True)
         parsed.loc[remaining_mask] = fallback
 
-    # Fallback: Excel serial dates (numeric values)
     numeric_values = pd.to_numeric(cleaned, errors="coerce")
     if numeric_values.notna().any():
         excel_dates = pd.to_datetime(
@@ -137,7 +126,6 @@ def _parse_datetime_series(series: pd.Series) -> pd.Series:
         parsed = parsed.combine_first(excel_dates)
 
     return parsed
-
 
 def _parse_amount_series(series: pd.Series) -> pd.Series:
     """Normalise amount column to floating point values.
@@ -151,20 +139,18 @@ def _parse_amount_series(series: pd.Series) -> pd.Series:
     """
     cleaned = (
         series.astype("string")
-        .str.replace("\xa0", "", regex=False)  # Non-breaking space
-        .str.replace(" ", "", regex=False)     # Regular space
-        .str.replace(".", "", regex=False)     # Thousand separator (European)
-        .str.replace(",", ".", regex=False)    # Decimal comma → dot
+        .str.replace("\xa0", "", regex=False)
+        .str.replace(" ", "", regex=False)
+        .str.replace(".", "", regex=False)
+        .str.replace(",", ".", regex=False)
     )
     cleaned = cleaned.replace({token: pd.NA for token in _NULL_TOKENS})
     return pd.to_numeric(cleaned, errors="coerce")
-
 
 def configure_logging(level: int | str | None = logging.INFO) -> Path:
     """Configure shared logging handlers for ingestion steps."""
 
     return setup_logging(level)
-
 
 def collect_raw_files(raw_dir: Path) -> List[Path]:
     """Return the list of raw data files to ingest."""
@@ -174,7 +160,6 @@ def collect_raw_files(raw_dir: Path) -> List[Path]:
         if path.suffix.lower() in SUPPORTED_EXTENSIONS and path.is_file()
     ]
     return files
-
 
 def read_raw_file(path: Path, strict: bool = True) -> pd.DataFrame:
     """Load a single raw CSV or Excel file as a DataFrame of strings.
@@ -210,13 +195,12 @@ def read_raw_file(path: Path, strict: bool = True) -> pd.DataFrame:
             raise ValueError(
                 f"File {path} is missing required columns: {', '.join(missing_columns)}"
             )
-        # Keep only the expected columns in the desired order (legacy behavior)
         frame = frame.loc[:, RAW_COLUMNS].copy()
     else:
-        
+
         available_mapped = [col for col in frame.columns if col in COL_MAP]
         extra_columns = [col for col in frame.columns if col not in COL_MAP]
-        
+
         if extra_columns:
             LOGGER.info(
                 "File %s contains %d extra columns not in COL_MAP (will be dropped): %s",
@@ -224,17 +208,16 @@ def read_raw_file(path: Path, strict: bool = True) -> pd.DataFrame:
                 len(extra_columns),
                 ", ".join(extra_columns[:5]) + ("..." if len(extra_columns) > 5 else ""),
             )
-        
+
         if not available_mapped:
             raise ValueError(
                 f"File {path} contains no recognized columns from COL_MAP. "
                 f"Available: {', '.join(frame.columns[:10])}"
             )
-        
-        frame = frame.loc[:, available_mapped].copy()
-    
-    return frame
 
+        frame = frame.loc[:, available_mapped].copy()
+
+    return frame
 
 def normalise_dataframe(frame: pd.DataFrame, use_extended_map: bool = False) -> pd.DataFrame:
     """Apply schema normalisation and type conversions.
@@ -248,12 +231,10 @@ def normalise_dataframe(frame: pd.DataFrame, use_extended_map: bool = False) -> 
         Normalized DataFrame with snake_case columns, typed correctly.
     """
     col_map = COL_MAP if use_extended_map else RENAME_MAP
-    
-    # Rename columns (only those present in the frame)
+
     columns_to_rename = {k: v for k, v in col_map.items() if k in frame.columns}
     normalised = frame.rename(columns=columns_to_rename)
-    
-    # Add missing columns as NaN 
+
     if use_extended_map:
         expected_columns = set(col_map.values())
         for col in expected_columns:
@@ -261,7 +242,6 @@ def normalise_dataframe(frame: pd.DataFrame, use_extended_map: bool = False) -> 
                 normalised[col] = pd.NA
                 LOGGER.debug("Added missing column '%s' as NaN", col)
 
-    # Identify string columns (all except dates and amounts)
     string_columns = [
         column
         for column in normalised.columns
@@ -270,18 +250,15 @@ def normalise_dataframe(frame: pd.DataFrame, use_extended_map: bool = False) -> 
     for column in string_columns:
         normalised[column] = _clean_string_series(normalised[column])
 
-    # Parse date columns
     for column in DATE_COLUMNS:
         if column in normalised.columns:
             normalised[column] = _parse_datetime_series(normalised[column])
 
-    # Parse amount columns
     for column in AMOUNT_COLUMNS:
         if column in normalised.columns:
             normalised[column] = _parse_amount_series(normalised[column])
 
     return normalised
-
 
 def log_dataset_summary(dataset: pd.DataFrame) -> None:
     """Emit dataset summary statistics to the console."""
@@ -308,7 +285,6 @@ def log_dataset_summary(dataset: pd.DataFrame) -> None:
     chiave_counts = dataset["chiave_contabile"].fillna("<NA>").value_counts()
     LOGGER.info("Records per chiave_contabile: %s", chiave_counts.to_dict())
 
-
 def log_quality_report(dataset: pd.DataFrame, original_row_count: int) -> None:
     """Emit comprehensive quality report .
     
@@ -322,8 +298,7 @@ def log_quality_report(dataset: pd.DataFrame, original_row_count: int) -> None:
     LOGGER.info("=" * 60)
     LOGGER.info("QUALITY REPORT")
     LOGGER.info("=" * 60)
-    
-    # Rows processed
+
     LOGGER.info("Rows processed: %d", original_row_count)
     LOGGER.info("Rows retained: %d", row_count)
     if original_row_count > row_count:
@@ -331,13 +306,11 @@ def log_quality_report(dataset: pd.DataFrame, original_row_count: int) -> None:
         LOGGER.info("Rows discarded: %d (%.2f%%)", original_row_count - row_count, pct_discarded)
     else:
         LOGGER.info("Rows discarded: 0 (0.00%%)")
-    
-    # Unique clients
+
     if "cliente" in dataset.columns:
         unique_clients = dataset["cliente"].dropna().nunique()
         LOGGER.info("Unique clients: %d", unique_clients)
-    
-    # Date ranges
+
     if "data_documento" in dataset.columns:
         date_series = dataset["data_documento"].dropna()
         if not date_series.empty:
@@ -349,7 +322,7 @@ def log_quality_report(dataset: pd.DataFrame, original_row_count: int) -> None:
             )
         else:
             LOGGER.warning("Data documento: no valid dates")
-    
+
     if "data_pareggio" in dataset.columns:
         pareggio_series = dataset["data_pareggio"].dropna()
         if not pareggio_series.empty:
@@ -360,8 +333,7 @@ def log_quality_report(dataset: pd.DataFrame, original_row_count: int) -> None:
             )
         else:
             LOGGER.info("Data pareggio: no valid dates (open invoices only)")
-    
-    # Missing value analysis for key columns
+
     key_columns = ["cliente", "numero_documento", "data_documento", "imp_div_int"]
     LOGGER.info("Missing value percentages:")
     for col in key_columns:
@@ -369,18 +341,16 @@ def log_quality_report(dataset: pd.DataFrame, original_row_count: int) -> None:
             missing_count = dataset[col].isna().sum()
             pct_missing = 100.0 * missing_count / row_count if row_count > 0 else 0.0
             LOGGER.info("  %s: %d (%.2f%%)", col, missing_count, pct_missing)
-    
-    # Distribution stats
+
     if "tipo_documento" in dataset.columns:
         tipo_counts = dataset["tipo_documento"].fillna("<NA>").value_counts()
         LOGGER.info("Top 5 tipo_documento: %s", dict(tipo_counts.head(5)))
-    
+
     if "divisa" in dataset.columns:
         divisa_counts = dataset["divisa"].fillna("<NA>").value_counts()
         LOGGER.info("Currency distribution: %s", dict(divisa_counts.head(5)))
-    
-    LOGGER.info("=" * 60)
 
+    LOGGER.info("=" * 60)
 
 def ingest() -> None:
     """Main entry point for the ingestion pipeline (backward compatible)."""
@@ -413,7 +383,6 @@ def ingest() -> None:
     dataset.to_parquet(output_path, compression="snappy", index=False)
     LOGGER.info("Wrote curated dataset to %s", output_path)
 
-
 def ingest_normalize(
     raw_dir: Path | None = None,
     output_path: Path | None = None,
@@ -431,13 +400,13 @@ def ingest_normalize(
         Normalized DataFrame with snake_case columns from COL_MAP.
     """
     project_root = Path(__file__).resolve().parents[2]
-    
+
     if raw_dir is None:
         raw_dir = project_root / "data" / "raw"
-    
+
     if output_path is None:
         output_path = project_root / "data" / "curated" / "line_items.parquet"
-    
+
     if not raw_dir.exists():
         raise FileNotFoundError(
             f"Raw data directory not found: {raw_dir}. Expected CSV or XLSX files."
@@ -448,47 +417,41 @@ def ingest_normalize(
         raise FileNotFoundError(
             f"No raw files found in {raw_dir}. Expected *.csv or *.xlsx files."
         )
-    
+
     LOGGER.info("Processing %d files from %s", len(files), raw_dir)
-    
+
     frames: List[pd.DataFrame] = []
     original_row_count = 0
-    
+
     for path in files:
-        # Read with strict=False to accept any columns in COL_MAP
         frame = read_raw_file(path, strict=False)
         original_row_count += len(frame)
-        
-        # Normalize with extended mapping
+
         normalised = normalise_dataframe(frame, use_extended_map=True)
         frames.append(normalised)
-        
+
         LOGGER.info("  %s: %d rows", path.name, len(normalised))
-    
+
     dataset = pd.concat(frames, ignore_index=True)
-    
-    # Filter out only the columns defined in COL_MAP (no extras)
+
     expected_columns = list(COL_MAP.values())
     available_columns = [col for col in expected_columns if col in dataset.columns]
     dataset = dataset.loc[:, available_columns]
-    
-    # Quality report 
+
     log_quality_report(dataset, original_row_count)
-    
-    # Write output
+
     output_path.parent.mkdir(parents=True, exist_ok=True)
     dataset.to_parquet(output_path, compression="snappy", index=False)
     LOGGER.info("Wrote normalized dataset to %s", output_path)
     LOGGER.info("Output schema: %d columns, %d rows", len(dataset.columns), len(dataset))
-    
-    return dataset
 
+    return dataset
 
 def main() -> None:
     """Run the ingestion pipeline with logging configured."""
     configure_logging()
     ingest()
 
-
 if __name__ == "__main__":
     main()
+

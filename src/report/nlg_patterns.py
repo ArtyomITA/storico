@@ -14,14 +14,12 @@ DOW_LABELS = ["Lunedì", "Martedì", "Mercoledì", "Giovedì", "Venerdì", "Saba
 
 LOGGER = logging.getLogger(__name__)
 
-
 def _safe_float(value: Any) -> float:
     """Return ``value`` as float, defaulting to NaN if conversion fails."""
     try:
         return float(value)
     except (TypeError, ValueError):
         return float("nan")
-
 
 def _format_percent(value: Any, digits: int = 2) -> str:
     """Format a numeric value as percentage with a safe fallback."""
@@ -30,14 +28,12 @@ def _format_percent(value: Any, digits: int = 2) -> str:
         return "n.d."
     return f"{numeric:.{digits}%}"
 
-
 def _format_decimal(value: Any, digits: int = 2) -> str:
     """Format a numeric value with a fixed amount of decimal places."""
     numeric = _safe_float(value)
     if np.isnan(numeric):
         return "n.d."
     return f"{numeric:.{digits}f}"
-
 
 def _pick_first(series: Mapping[str, Any], *candidates: str) -> float:
     """Return the first available value among ``candidates`` converted to float."""
@@ -47,7 +43,6 @@ def _pick_first(series: Mapping[str, Any], *candidates: str) -> float:
             if not np.isnan(numeric):
                 return numeric
     return float("nan")
-
 
 def _dow_label(dow_value: Any) -> str:
     """Return the Italian weekday label for ``dow_value`` if valid."""
@@ -62,7 +57,6 @@ def _dow_label(dow_value: Any) -> str:
         return DOW_LABELS[numeric]
     return "n.d."
 
-
 def _policy_scores(series: Mapping[str, Any]) -> List[Tuple[str, float]]:
     """Collect and sort policy scores contained in ``series``."""
     scores: List[Tuple[str, float]] = []
@@ -74,11 +68,9 @@ def _policy_scores(series: Mapping[str, Any]) -> List[Tuple[str, float]]:
     scores.sort(key=lambda item: item[1], reverse=True)
     return scores
 
-
 def _policy_label(name: str) -> str:
     """Return a human-friendly label for a policy code."""
     return name.replace("_", " ").upper()
-
 
 def verbalize_cadence(row: Mapping[str, Any]) -> str:
     """Summarise cadence signals with explicit evidence values."""
@@ -100,7 +92,6 @@ def verbalize_cadence(row: Mapping[str, Any]) -> str:
     conc_text = _format_decimal(dow_conc, digits=2)
     return f"{cadence_prefix}: {ratio_text}; giorno tipico **{dow_text}**, concentrazione {conc_text}"
 
-
 def verbalize_policy(row: Mapping[str, Any]) -> str:
     """Describe the dominant policy preference with alternatives."""
     scores = _policy_scores(row)
@@ -116,7 +107,6 @@ def verbalize_policy(row: Mapping[str, Any]) -> str:
         f"alternative: {alt_text}"
     )
 
-
 def verbalize_cardinality(row: Mapping[str, Any]) -> str:
     """Explain typical cardinality behaviour including entropy evidence."""
     k_mode = _safe_float(row.get("k_mode"))
@@ -127,7 +117,6 @@ def verbalize_cardinality(row: Mapping[str, Any]) -> str:
             entropy=_format_decimal(k_entropy, digits=2),
         )
     )
-
 
 def verbalize_amount_pref(row: Mapping[str, Any]) -> str:
     """Summarise amount preference slope with qualitative label."""
@@ -142,7 +131,6 @@ def verbalize_amount_pref(row: Mapping[str, Any]) -> str:
         descriptor = "bassi"
     return f"Propensione verso importi **{descriptor}** (r={slope:.2f})"
 
-
 def _policy_coherence(scores: Sequence[Tuple[str, float]]) -> float:
     """Compute a coherence proxy as delta between top and runner-up policy."""
     if not scores:
@@ -151,7 +139,6 @@ def _policy_coherence(scores: Sequence[Tuple[str, float]]) -> float:
         return float("nan")
     top, runner = scores[0], scores[1]
     return max(0.0, top[1] - runner[1])
-
 
 def verbalize_confidence(row: Mapping[str, Any], *, scores: Optional[Sequence[Tuple[str, float]]] = None) -> str:
     """Build a confidence statement referencing stability and policy coherence."""
@@ -176,13 +163,11 @@ def verbalize_confidence(row: Mapping[str, Any], *, scores: Optional[Sequence[Tu
         )
     )
 
-
 @dataclass
 class SummaryContext:
     cliente: str
     score_row: Optional[pd.Series]
     pattern_row: Optional[pd.Series]
-
 
 def _resolve_context(
     cliente: str,
@@ -209,7 +194,6 @@ def _resolve_context(
                 resolved_pattern = subset.iloc[0]
 
     return SummaryContext(cliente=cliente, score_row=resolved_score, pattern_row=resolved_pattern)
-
 
 def render_pattern_summary(
     cliente: str,
@@ -246,3 +230,4 @@ def render_pattern_summary(
         verbalize_amount_pref(merged_data),
         verbalize_confidence(merged_data, scores=scores),
     ]
+
