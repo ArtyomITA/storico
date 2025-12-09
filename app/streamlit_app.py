@@ -29,6 +29,8 @@ from app.page_components.pattern_card_v2 import render_pattern_card_v2
 from app.page_components.pattern_summary import render_pattern_summary as render_pattern_summary_page
 from app.page_components.pipeline_overview import render_pipeline_overview_page
 from app.page_components.policy_iq import render_policy_iq
+from app.page_components.model_internals import render_model_internals_page
+from app.page_components.client_debugger import render_client_debugger_page
 
 from src.analytics.pattern_detectors import POLICY_NAMES, infer_pattern_label
 from src.report.nlg_patterns import render_pattern_summary
@@ -68,7 +70,7 @@ PERIODICITY_COLUMNS = [
     "periodicity_monthly",
 ]
 
-PAGE_OPTIONS = ("Overview & Wizard", "Overview & Pipeline", "Pattern Card", "Pattern Summary", "KPI Dashboard", "Data Explorer", "Clusters", "Policy IQ")
+PAGE_OPTIONS = ("🏠 Home & Monitor", "🧠 Model Internals", "🔎 Client Debugger")
 
 @st.cache_data(show_spinner=False)
 def _load_parquet(path: Path) -> pd.DataFrame:
@@ -1875,11 +1877,8 @@ def main() -> None:
 
     page = st.sidebar.radio("Pagina", PAGE_OPTIONS, index=default_page_index, key="selected_page")
 
-    if page == "Overview & Wizard":
+    if page == "🏠 Home & Monitor":
         render_overview_wizard_page()
-        return
-
-    if page == "Overview & Pipeline":
         render_pipeline_overview_page()
         return
 
@@ -1892,12 +1891,12 @@ def main() -> None:
         st.error("❌ Il file events.parquet è necessario per utilizzare questa pagina.")
         st.info(
             "💡 **Come iniziare:**\n\n"
-            "1. Vai alla pagina **Overview & Wizard** (nella sidebar)\n"
+            "1. Vai alla pagina **🏠 Home & Monitor** (nella sidebar)\n"
             "2. Genera dati demo oppure carica i tuoi file SAP\n"
             "3. Torna qui dopo aver completato l'ingestion"
         )
         st.markdown("---")
-        st.markdown("**👉 [Clicca qui per andare a Overview & Wizard](/?page=Overview%20%26%20Wizard)**")
+        st.markdown("**👉 [Clicca qui per andare a Home & Monitor](/?page=%F0%9F%8F%A0%20Home%20%26%20Monitor)**")
         st.stop()
 
     event_items = tables.get("event_items", pd.DataFrame())
@@ -1920,162 +1919,52 @@ def main() -> None:
         st.error("❌ Nessun cliente disponibile negli eventi.")
         st.info(
             "💡 **Come iniziare:**\n"
-            "1. Vai alla pagina **Overview & Wizard** per generare dati demo o caricare file SAP\n"
+            "1. Vai alla pagina **🏠 Home & Monitor** per generare dati demo o caricare file SAP\n"
             "2. Oppure attiva **Mock mode** nella sidebar e clicca **📦 Crea dataset demo**"
         )
         st.stop()
 
-    drill_active = False
-    drill_source_page = None
-
-    if "drill_cliente" in st.session_state and "active_page" in st.session_state:
-        drill_cliente = st.session_state["drill_cliente"]
-        target_page = st.session_state["active_page"]
-        drill_source_page = st.session_state.get("drill_source_page", "Pattern Summary")
-
-        if drill_cliente in clients:
-            st.session_state["selected_client"] = drill_cliente
-
-            page = target_page
-            drill_active = True
-
-            source_icon = "🔬" if drill_source_page == "Clusters" else "📊"
-            st.sidebar.info(f"🔗 **Drill-down attivo**\n\nCliente: **{drill_cliente}**\n\nDa: {source_icon} {drill_source_page}")
-        else:
-            st.warning(f"⚠️ Cliente drill-down '{drill_cliente}' non trovato nel dataset corrente.")
-            del st.session_state["drill_cliente"]
-            del st.session_state["active_page"]
-            if "drill_source_page" in st.session_state:
-                del st.session_state["drill_source_page"]
-
-    if page == "Pattern Summary":
-        @_section_tracker(developer_metrics, "UI.PatternSummary")
-        def _render_pattern_summary_wrapper() -> None:
-            render_pattern_summary_page(data_dir=_data_root())
-
-        _render_pattern_summary_wrapper()
-        if developer_mode:
-            developer_metrics["logs"] = _load_warning_log_records()
-            developer_metrics["champion"] = _load_champion_metadata()
-            _render_developer_panel(developer_metrics)
-        return
-
-    if "selected_client" not in st.session_state or st.session_state["selected_client"] not in clients:
-        st.session_state["selected_client"] = clients[0]
-
-    st.sidebar.header("Selezione")
-    selected_client_value = st.sidebar.selectbox("Cliente", clients, key="selected_client")
-    selected_client = str(selected_client_value)
-
-    hide_regmonth = st.sidebar.checkbox(
-        "Nascondi policy 'regmonth'",
-        value=True,
-        key="hide_regmonth",
-        help="Regmonth = 'stesso mese di registrazione', non 'pagato tutto il mese'. Attiva per escludere da grafici/metriche."
-    )
-
-    if page == "KPI Dashboard":
-        @_section_tracker(developer_metrics, "UI.KPI_Dashboard")
-        def _render_kpi_dashboard() -> None:
-            render_kpi_dashboard_page(
-                tables=tables,
-                developer_metrics=developer_metrics,
-                data_root_func=_data_root,
-            )
-
-        _render_kpi_dashboard()
-        if developer_mode:
-            developer_metrics["logs"] = _load_warning_log_records()
-            developer_metrics["champion"] = _load_champion_metadata()
-            _render_developer_panel(developer_metrics)
-        return
-
-    if page == "Data Explorer":
-        render_data_explorer_page(
-            tables=tables,
-            default_client=selected_client,
-            developer_metrics=developer_metrics,
+    if page == "🧠 Model Internals":
+        hide_regmonth = st.sidebar.checkbox(
+            "Nascondi policy 'regmonth'",
+            value=True,
+            key="hide_regmonth",
+            help="Regmonth = 'stesso mese di registrazione', non 'pagato tutto il mese'. Attiva per escludere da grafici/metriche."
         )
-        if developer_mode:
-            developer_metrics["logs"] = _load_warning_log_records()
-            developer_metrics["champion"] = _load_champion_metadata()
-            _render_developer_panel(developer_metrics)
-        return
-
-    if page == "Clusters":
-        @_section_tracker(developer_metrics, "UI.Clusters")
-        def _render_clusters() -> None:
-            render_clusters_page(
-                tables=tables,
-                selected_client=selected_client,
-                clients=clients,
-                data_root_func=_data_root,
-            )
-
-        _render_clusters()
-        if developer_mode:
-            developer_metrics["logs"] = _load_warning_log_records()
-            developer_metrics["champion"] = _load_champion_metadata()
-            _render_developer_panel(developer_metrics)
-        return
-
-    if page == "Policy IQ":
-        @_section_tracker(developer_metrics, "UI.PolicyIQ")
-        def _render_policy_iq() -> None:
-            render_policy_iq(data_dir=_data_root(), hide_regmonth=hide_regmonth)
-
-        _render_policy_iq()
-        if developer_mode:
-            developer_metrics["logs"] = _load_warning_log_records()
-            developer_metrics["champion"] = _load_champion_metadata()
-            _render_developer_panel(developer_metrics)
-        return
-
-    if drill_active and drill_source_page:
-        st.markdown("---")
-        breadcrumb_col1, breadcrumb_col2 = st.columns([0.3, 0.7])
-
-        with breadcrumb_col1:
-            if st.button(f"← Torna a {drill_source_page}", key="drill_back_button", type="secondary"):
-                if "drill_cliente" in st.session_state:
-                    del st.session_state["drill_cliente"]
-                if "active_page" in st.session_state:
-                    del st.session_state["active_page"]
-                if "drill_source_page" in st.session_state:
-                    del st.session_state["drill_source_page"]
-
-                st.session_state["selected_page"] = drill_source_page
-                st.rerun()
-
-        with breadcrumb_col2:
-            st.caption(f"📍 Navigazione: {drill_source_page} → Pattern Card (Cliente: {selected_client})")
-
-        st.markdown("---")
-
-    @_section_tracker(developer_metrics, "UI.PatternCard_v2")
-    def _render_pattern_card_v2() -> None:
-        render_pattern_card_v2(
-            selected_client=selected_client,
-            events=events,
-            pattern_scores=pattern_scores,
-            pattern_table_df=pattern_table_df,
-            feature_repository=feature_repository,
-            cat_feature_cols=cat_feature_cols,
-            cat_cat_indices=cat_cat_indices,
-            auto_feature_cols=auto_feature_cols,
+        render_model_internals_page(
+            tables=tables,
+            clients=clients,
+            data_root_func=_data_root,
             developer_metrics=developer_metrics,
             hide_regmonth=hide_regmonth,
         )
+        if developer_mode:
+            developer_metrics["logs"] = _load_warning_log_records()
+            developer_metrics["champion"] = _load_champion_metadata()
+            _render_developer_panel(developer_metrics)
+        return
 
-    _render_pattern_card_v2()
+    if page == "🔎 Client Debugger":
+        if "selected_client" not in st.session_state or st.session_state["selected_client"] not in clients:
+            st.session_state["selected_client"] = clients[0]
 
-    if drill_active:
-        pass
+        st.sidebar.header("Selezione")
+        selected_client_value = st.sidebar.selectbox("Cliente", clients, key="selected_client")
+        selected_client = str(selected_client_value)
 
-    if developer_mode:
-        developer_metrics["logs"] = _load_warning_log_records()
-        developer_metrics["champion"] = _load_champion_metadata()
-        _render_developer_panel(developer_metrics)
+        render_client_debugger_page(
+            selected_client=selected_client,
+            events=events,
+            tables=tables,
+            data_root_func=_data_root,
+        )
+        if developer_mode:
+            developer_metrics["logs"] = _load_warning_log_records()
+            developer_metrics["champion"] = _load_champion_metadata()
+            _render_developer_panel(developer_metrics)
+        return
+
+    st.error(f"Pagina '{page}' non riconosciuta.")
 
 if __name__ == "__main__":
     main()

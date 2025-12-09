@@ -50,6 +50,11 @@ def load_curated_tables(project_root: Path) -> Dict[str, pd.DataFrame]:
         "events": curated_dir / "events.parquet",
         "event_items": curated_dir / "event_items.parquet",
     }
+    optional_paths = {
+        "client_clusters": curated_dir / "client_clusters.parquet",
+        "client_patterns": curated_dir / "client_patterns.parquet",
+        "cluster_priors": curated_dir / "cluster_priors.parquet",
+    }
     tables: Dict[str, pd.DataFrame] = {}
     for name, path in paths.items():
         if not path.exists() and name == "event_items":
@@ -60,6 +65,13 @@ def load_curated_tables(project_root: Path) -> Dict[str, pd.DataFrame]:
             raise FileNotFoundError(f"Missing required file: {path}")
         LOGGER.info("Loading %s from %s", name, path)
         tables[name] = pd.read_parquet(path)
+    for name, path in optional_paths.items():
+        if path.exists():
+            LOGGER.info("Loading optional %s from %s", name, path)
+            tables[name] = pd.read_parquet(path)
+        else:
+            LOGGER.warning("Optional file %s not found; skipping", path)
+            tables[name] = pd.DataFrame()
     return tables
 
 def enrich_features(features: pd.DataFrame, event_items: pd.DataFrame) -> pd.DataFrame:
@@ -80,6 +92,61 @@ def enrich_features(features: pd.DataFrame, event_items: pd.DataFrame) -> pd.Dat
             df[col] = "UNKNOWN"
         df[col] = df[col].fillna("UNKNOWN").astype(str)
     return df
+
+def enrich_with_cluster_priors(
+    df: pd.DataFrame,
+    client_clusters: pd.DataFrame,
+    client_patterns: pd.DataFrame,
+    cluster_priors: pd.DataFrame,
+) -> pd.DataFrame:
+    """Enrich features with cluster priors and pattern information.
+    
+    Merges cluster_label, membership_prob, dominant_policy from clusters/patterns,
+    and P(policy|cluster) from cluster_priors. Noise clients (cluster_label=-1)
+    receive global priors as fallback.
+    """
+    out = df.copy()
+    
+    if not client_clusters.empty and "cliente" in client_clusters.columns:
+        cluster_cols = [c for c in ["cliente", "cluster_label", "membership_prob"] if c in client_clusters.columns]
+        out = out.merge(client_clusters[cluster_cols], on="cliente", how="left")
+        out["cluster_label"] = out["cluster_label"].fillna(-1).astype(int)
+        out["membership_prob"] = out["membership_prob"].fillna(0.0)
+        LOGGER.info("Merged cluster features from client_clusters")
+    else:
+        out["cluster_label"] = -1
+        out["membership_prob"] = 0.0
+    
+    if not client_patterns.empty and "cliente" in client_patterns.columns:
+        pattern_cols = ["cliente", "dominant_policy", "pattern_confidence"]
+        pattern_cols = [c for c in pattern_cols if c in client_patterns.columns]
+        if len(pattern_cols) > 1:
+            out = out.merge(client_patterns[pattern_cols], on="cliente", how="left")
+            if "dominant_policy" in out.columns:
+                out["dominant_policy"] = out["dominant_policy"].fillna("UNKNOWN").astype(str)
+            if "pattern_confidence" in out.columns:
+                out["pattern_confidence"] = out["pattern_confidence"].fillna(0.0)
+            LOGGER.info("Merged pattern features from client_patterns")
+    
+    if not cluster_priors.empty and "cluster_label" in cluster_priors.columns:
+        prior_cols = [c for c in cluster_priors.columns if c.startswith("P_") or c == "cluster_label"]
+        global_priors = cluster_priors[cluster_priors["cluster_label"] == -1]
+        if global_priors.empty:
+            global_priors = cluster_priors.drop(columns=["cluster_label"]).mean().to_frame().T
+            global_priors["cluster_label"] = -1
+        out = out.merge(cluster_priors[prior_cols], on="cluster_label", how="left")
+        p_cols = [c for c in prior_cols if c.startswith("P_")]
+        for p_col in p_cols:
+            fallback_val = global_priors[p_col].iloc[0] if p_col in global_priors.columns else 0.0
+            out[p_col] = out[p_col].fillna(fallback_val)
+        LOGGER.info("Merged cluster priors: %s", p_cols)
+    else:
+        LOGGER.warning("No cluster_priors available; skipping priors enrichment")
+    
+    if "dominant_policy" in out.columns:
+        out["dominant_policy"] = out["dominant_policy"].fillna("UNKNOWN").astype(str)
+    
+    return out
 
 def temporal_split(df: pd.DataFrame, events: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame]:
     if "data_pareggio" not in events.columns:
@@ -104,7 +171,7 @@ def select_features(df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.Series, List[str
     feature_df = df.drop(columns=[col for col in drop_cols if col in df.columns])
     categorical_cols = [
         col
-        for col in ["tipo_documento", "chiave_contabile", "divisa", "periodo_contabile", "macro_tipo"]
+        for col in ["tipo_documento", "chiave_contabile", "divisa", "periodo_contabile", "macro_tipo", "dominant_policy"]
         if col in feature_df.columns
     ]
     cat_indices = [cast(int, feature_df.columns.get_loc(col)) for col in categorical_cols]
@@ -251,6 +318,12 @@ def main() -> None:
     tables = load_curated_tables(project_root)
 
     features = enrich_features(tables["train_features"], tables["event_items"])
+    features = enrich_with_cluster_priors(
+        features,
+        tables.get("client_clusters", pd.DataFrame()),
+        tables.get("client_patterns", pd.DataFrame()),
+        tables.get("cluster_priors", pd.DataFrame()),
+    )
     train_df, test_df = temporal_split(features, tables["events"])
     train_features, train_target, cat_cols, cat_indices = select_features(train_df)
 
@@ -259,6 +332,18 @@ def main() -> None:
 
     split = build_train_validation_split(train_df)
     model = train_model(train_features, train_target, cat_indices, split)
+
+    feature_importance = model.get_feature_importance()
+    feature_names = train_features.columns.tolist()
+    importance_df = pd.DataFrame({
+        "feature": feature_names,
+        "importance": feature_importance,
+    }).sort_values("importance", ascending=False)
+    LOGGER.info("Top 15 feature importances:\n%s", importance_df.head(15).to_string(index=False))
+    
+    importance_path = project_root / CURATED_DIR / "feature_importance.parquet"
+    importance_df.to_parquet(importance_path, compression="snappy", index=False)
+    LOGGER.info("Saved feature importance to %s", importance_path)
 
     calibrator = calibrate_probabilities(model, train_features, train_target, cat_indices, split)
 

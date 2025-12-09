@@ -21,6 +21,23 @@ from src.utils.logging_setup import (
     get_current_log_file,
     log_timed,
 )
+from src.data import ingest_multi
+from src.features import build_events, make_features, make_labels
+from src.analytics import (
+    make_client_embeddings,
+    embedding_viz,
+    run_hdbscan as hdbscan_module,
+    cluster_profile,
+    pattern_detectors,
+    rules_backtest,
+    kpi_ranking,
+    calibration,
+    event_policy_metrics,
+)
+from src.report import make_report
+from src.models import train
+from src.training import pointwise_trainer
+from src.inference import score_open_invoices
 
 LOGGER = logging.getLogger(__name__)
 
@@ -52,17 +69,20 @@ class PipelineConfig:
     Prompt 8: Idempotent pipeline with step flags.
     """
 
-    steps: List[str]
-    skip_normalize: bool
-    skip_features: bool
-    skip_embeddings: bool
-    skip_hdbscan: bool
-    skip_patterns: bool
-    skip_train: bool
-    skip_score: bool
-    skip_analytics: bool
-    model_type: str
-    log_level: str
+    input_patterns: tuple
+    docmap_path: Optional[Path]
+    model: str
+    make_embeddings: bool
+    run_hdbscan: bool
+    embedding_neighbors: int
+    use_umap: bool
+    min_cluster_size: int
+    min_samples: int
+    make_kpi: bool
+    make_calibration: bool
+    make_policy_metrics: bool
+    step: Optional[str]
+    skip_validation: bool
 
 def parse_args(argv: Sequence[str] | None = None) -> PipelineConfig:
     """Parse CLI options for the unified pipeline runner."""
@@ -240,6 +260,10 @@ class PipelineRunner:
         if not self.config.skip_validation:
             steps.append(step_registry["validate"])
 
+        steps.append(step_registry["patterns"])
+
+        steps.append(step_registry["train"])
+
         if self.config.make_embeddings:
             steps.append(step_registry["embeddings"])
 
@@ -249,10 +273,6 @@ class PipelineRunner:
             steps.append(step_registry["hdbscan"])
 
         steps.append(step_registry["clusters"])
-
-        steps.append(step_registry["patterns"])
-
-        steps.append(step_registry["train"])
 
         steps.append(step_registry["score"])
 
@@ -288,8 +308,19 @@ class PipelineRunner:
 
         LOGGER.info("Running SAP normalization (Prompt 2)...")
         from src.data import normalize_sap
-
-        normalize_sap.main([])
+        
+        raw_dir = self.project_root / "data" / "raw"
+        input_patterns = list(raw_dir.glob("*.xlsx")) + list(raw_dir.glob("*.csv"))
+        if not input_patterns:
+            LOGGER.warning("No raw files found in data/raw; skipping normalize step")
+            return
+        
+        argv = []
+        for p in input_patterns:
+            argv.extend(["--input", str(p)])
+        argv.extend(["--output", str(output_path)])
+        
+        normalize_sap.main(argv)
 
     @log_timed("Ingest raw datasets")
     def run_ingestion(self) -> None:
@@ -368,7 +399,8 @@ class PipelineRunner:
         if feature_matrix.empty:
             LOGGER.warning("Feature matrix is empty; outputs not refreshed.")
             return None
-        make_features.save_feature_outputs(feature_matrix, client_profiles, self.project_root)
+        events_with_features = datasets["events"].copy()
+        make_features.save_feature_outputs(feature_matrix, client_profiles, events_with_features, self.project_root)
         make_features.run_random_forest_smoke_test(feature_matrix)
         return {"rows": len(feature_matrix)}
 
@@ -520,7 +552,7 @@ class PipelineRunner:
         LOGGER.info("Running pattern detectors (Prompt 5)...")
         from src.analytics import pattern_detectors
 
-        pattern_detectors.main([])
+        pattern_detectors.main()
 
     @log_timed("Train pointwise model (Prompt 6)")
     def run_pointwise_trainer(self) -> None:
