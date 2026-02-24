@@ -1,122 +1,145 @@
-# Python virtual environments
-.venv/
-venv/
-venv312/
-env/
-ENV/
+# =============================================================================
+# .gitignore — Storico: Invoice Payment Pattern Learning System
+# =============================================================================
+# Only source code, tests, and documentation are tracked.
+# Datasets, ML artefacts, generated output, and secrets remain local.
+# =============================================================================
 
-# Azure and documentation artifacts
-.azure/
 
-# Python cache and compiled files
+# ── [1] SOURCE DATA & INPUTS ─────────────────────────────────────────────────
+# Do not commit real accounting data or large source files.
+data/raw/*.xlsx
+data/raw/*.csv
+data/raw/*.xls
+data/raw/*.xlsm
+data/normalized/*.parquet
+data/curated/*.parquet
+data/curated/*.csv
+data/mock/*.parquet
+data/mock/*.csv
+data/*.xlsx
+data/*.xls
+data/*.csv
+# Keep the minimal CI sample
+!data/raw_sample/
+!data/raw_sample/**
+
+
+# ── [2] ML MODELS & TRAINING ARTEFACTS ───────────────────────────────────────
+# Weights and serialised models are too large for git; use DVC or local storage.
+models/
+catboost_info/
+autogluon_models/
+**/*.cbm
+**/*.pkl
+**/*.joblib
+**/*.bin
+**/*.onnx
+**/*.pt
+**/*.pth
+**/*.h5
+**/*.hdf5
+**/*.safetensors
+**/*.gguf
+**/*.ggml
+
+
+# ── [3] GENERATED REPORTS & OUTPUT ───────────────────────────────────────────
+reports/
+**/*.html
+**/*.pdf
+!docs/*.png
+!docs/*.svg
+
+
+# ── [4] RUNTIME LOGS ─────────────────────────────────────────────────────────
+logs/
+**/*.jsonl
+*.log
+
+
+# ── [5] SECRETS & ENVIRONMENT CONFIGURATION ──────────────────────────────────
+.env
+.env.*
+!.env.example
+*.env
+secrets.yaml
+secrets.json
+secrets.toml
+credentials.json
+credentials.yaml
+config.local.py
+**/config/local_*.py
+**/*_secret*
+**/*_private*
+
+
+# ── [6] PYTHON BYTECODE & VIRTUAL ENVIRONMENTS ───────────────────────────────
 __pycache__/
 **/__pycache__/
 *.py[cod]
 *$py.class
-*.so
-
-# Distribution / packaging
+*.pyo
 .Python
 build/
-develop-eggs/
 dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
 *.egg-info/
-.installed.cfg
-*.egg
-
-# PyInstaller
-*.manifest
-*.spec
-
-# Unit test / coverage reports
-htmlcov/
-.tox/
-.coverage
-.coverage.*
-.cache
-nosetests.xml
-coverage.xml
-*.cover
-.hypothesis/
-.pytest_cache/
-
-# Jupyter Notebook
-.ipynb_checkpoints
-
-# IPython
-profile_default/
-ipython_config.py
-
-# pyenv
-.python-version
-
-# Environments
-.env
-.venv
-env/
+.eggs/
+.venv/
 venv/
+env/
 ENV/
-env.bak/
-venv.bak/
+*.whl
+pip-wheel-metadata/
 
-# IDE
-.vscode/
+
+# ── [7] CONDA / PIPENV / POETRY LOCKS ────────────────────────────────────────
+.conda/
+Pipfile.lock
+poetry.lock
+
+
+# ── [8] JUPYTER ───────────────────────────────────────────────────────────────
+.ipynb_checkpoints/
+**/.ipynb_checkpoints/
+
+
+# ── [9] IDE & EDITOR ──────────────────────────────────────────────────────────
+.vscode/settings.json
+.vscode/launch.json
 .idea/
 *.swp
 *.swo
 *~
 
-# OS
+
+# ── [10] TESTING & COVERAGE ──────────────────────────────────────────────────
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+coverage.xml
+*.cover
+.hypothesis/
+
+
+# ── [11] OS FILES ─────────────────────────────────────────────────────────────
 .DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
 Thumbs.db
+$RECYCLE.BIN/
+desktop.ini
 
-# Project specific - Generated outputs
-catboost_info/
 
-# Logs - All execution logs
-logs/
-logs/*.jsonl
-
-# Data - Raw and curated
-data/raw/
-data/raw/*.csv
-data/raw/*.xlsx
-data/curated/
-data/curated/*.parquet
-data/curated/*.json
-data/curated/*.csv
-
-# Data mock - Raw and curated
-data_mock/raw/
-data_mock/curated/
-
-# Models - All trained models and artifacts
-models/
-models/*.cbm
-models/*.pkl
-models/*.json
-models/autogluon/
-
-# Reports - Generated HTML reports
-reports/
-reports/*.html
-
-# Artifacts - Documentation artifacts
-_artifacts/
-_artifacts/*.svg
-_artifacts/*.json
-
-# Temporary files
+# ── [12] TEMPORARY & BUILD FILES ─────────────────────────────────────────────
 *.tmp
+*.temp
 *.bak
-*.log
-README.prev.md
+*.orig
+tmp/
+temp/
+.cache/
