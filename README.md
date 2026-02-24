@@ -1,4 +1,4 @@
-# Storico — Invoice Payment Pattern Learning System
+# Storico K-pattern — Invoice Payment Pattern Learning System
 
 > **Supervised + unsupervised ML pipeline for open-invoice ranking.**
 > Learns each client's payment behaviour from historical accounting data,
