@@ -1,9 +1,11 @@
-# Storico K-pattern — Invoice Payment Pattern Learning System
+# Storico K-pattern: Invoice Payment Pattern Learning System
+
+By **Adrian Ciprian Iancu** · [GitHub](https://github.com/ArtyomITA) · [Hugging Face](https://huggingface.co/adriandj3) · [LinkedIn](https://www.linkedin.com/in/adrian-ciprian-iancu-a2a477391) · [site](https://artyomita.github.io/)
 
 > **Supervised + unsupervised ML pipeline for open-invoice ranking.**
 > Learns each client's payment behaviour from historical accounting data,
-> clusters clients by behavioural profile, and assigns a **0–5 priority score**
-> to every open invoice — deterministically, without hand-crafted rules.
+> clusters clients by behavioural profile, and assigns a **0-5 priority score**
+> to every open invoice, deterministically, without hand-crafted rules.
 
 **Stack:** Python 3.11 · CatBoost · AutoGluon · HDBSCAN · Streamlit
 **Input:** Historical accounting export (closed + open line items, `.xlsx`/`.csv`)
@@ -60,7 +62,7 @@ No hard-coded rules: everything derives from observed payment behaviour.
 
 ---
 
-## Layer A — Ingest & Normalisation
+## Layer A: Ingest & Normalisation
 
 Ingests raw accounting exports and normalises them into a canonical schema.
 
@@ -76,11 +78,11 @@ handles all variants without manual intervention.
 | `src/data/generate_mock_scenarios.py` | Synthetic client generator (FIFO / Largest / Random) |
 | `src/utils/sap_glossary.py` | Column alias dictionary for varying source schemas |
 
-**Clearing event key:** `(client_id, clearing_date, clearing_doc)` — one event = one payment session where a client settles one or more open items simultaneously.
+**Clearing event key:** `(client_id, clearing_date, clearing_doc)`, one event = one payment session where a client settles one or more open items simultaneously.
 
 ---
 
-## Layer B — Feature Engineering
+## Layer B: Feature Engineering
 
 Constructs a pointwise feature matrix: one row per `(event, invoice)` pair.
 Features capture both the invoice's attributes at that moment and the client's
@@ -109,7 +111,7 @@ aggregated historical behaviour.
 
 ---
 
-## Layer C — Unsupervised Learning
+## Layer C: Unsupervised Learning
 
 **Core idea:** Group clients by *behaviour*, not by sector or revenue.  
 HDBSCAN finds density-based clusters without a fixed K parameter.
@@ -127,12 +129,12 @@ Client profiles (float vector)
 | **Embedding** | SHAP values from a preliminary model → behavioural vector per client |
 | **Projection** | PCA (default) or UMAP (optional flag) → 2D for visualisation |
 | **HDBSCAN params** | `min_cluster_size=30`, `min_samples=15`, `cluster_selection_method=eom` |
-| **Cluster Priors** | `P(policy=FIFO | cluster=0) = 0.78` — Dirichlet smoothed distributions |
+| **Cluster Priors** | `P(policy=FIFO | cluster=0) = 0.78`, Dirichlet smoothed distributions |
 | **Policy Detectors** | 8 policies evaluated per event: FIFO, LIFO, Largest, Smallest, EOM, Same-Period, Nearest-Due, Random |
 
 ---
 
-## Layer D — Supervised Learning (Pointwise Ranker)
+## Layer D: Supervised Learning (Pointwise Ranker)
 
 **Objective:** Given a set of open invoices for a client, assign each a probability
 `p_i ∈ [0,1]` of being settled in the next payment event. Probability is then
@@ -178,17 +180,17 @@ Challenger is promoted only if it beats the champion on nDCG@10 on the held-out 
 
 ---
 
-## Layer E — Scoring, Analytics & Reporting
+## Layer E: Scoring, Analytics & Reporting
 
 1. **Score open invoices** (`score_open_invoices.py`) → `open_scored.parquet`
-2. **Policy backtesting** — historical validation: how much value would ranking have recovered?
-3. **Ranking KPIs** — Precision@k, MRR, nDCG@k per client and globally
-4. **HTML report generation** — per-client pattern card with charts and score table
-5. **NLG pattern summaries** — auto-generated textual descriptions of client behaviour
+2. **Policy backtesting**, historical validation: how much value would ranking have recovered?
+3. **Ranking KPIs**, Precision@k, MRR, nDCG@k per client and globally
+4. **HTML report generation**, per-client pattern card with charts and score table
+5. **NLG pattern summaries**, auto-generated textual descriptions of client behaviour
 
 ---
 
-## Layer F — Streamlit Dashboard
+## Layer F: Streamlit Dashboard
 
 Three logical sections mapped to operational roles:
 
@@ -292,7 +294,7 @@ python -m src.pipeline.run_all --make-embeddings --run-hdbscan
 ## Project Status
 
 > **End goal:** A production-grade system that, given any set of open invoices for
-> a client, predicts — with measurable precision — which invoices will be settled
+> a client, predicts, with measurable precision, which invoices will be settled
 > in the next payment run. No domain assumptions, no manual rules.
 
 ### Completed
@@ -344,10 +346,10 @@ Testing & Validation           ████████░░░░░░░░�
 
 - Fully local: no cloud dependency, runs on a standard Windows/Linux workstation
 - Source data files must never be committed (covered by `.gitignore`)
-- Model artefacts are too large for git — use DVC or local storage
+- Model artefacts are too large for git, use DVC or local storage
 - No API keys in source code; use `.env` (excluded from git) for any env-specific config
 
 ---
 
-*ArtyomITA — Invoice Payment Intelligence System*
+*ArtyomITA, Invoice Payment Intelligence System*
 *Last updated: February 2026*
